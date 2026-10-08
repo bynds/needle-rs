@@ -12,6 +12,11 @@
 #                                             baseline uses none: the target's defaults are
 #                                             ARMv7-A, VFPv3-D16, Thumb-2, no NEON.
 #
+# Also builds needle-jibo-neon: the runner with the `neon` feature and `-C target-feature=+neon`
+# (needle-core/src/cq_neon.rs), in its own target directory, so the robot can run the baseline and
+# the NEON build side by side. Set JIBO_NO_NEON=1 to skip it. Rust 1.87 warns that `neon` is an
+# unstable -Ctarget-feature; it is applied all the same, and the build fails if it is not.
+#
 # Each package is built in its own cargo invocation. Building needle-jibo together with
 # needle-rs-cli would unify features and switch on the CLI's rayon `parallel` path in the runner.
 set -euo pipefail
@@ -48,6 +53,14 @@ for pkg in needle-jibo needle-rs-cli; do
   cargo "+$TC" build --locked --release --target "$T" -p "$pkg"
 done
 cp "target/$T/release/needle-jibo" "target/$T/release/needle-rs" "$OUT/"
+if [ -z "${JIBO_NO_NEON:-}" ]; then
+  CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS="${JIBO_RUSTFLAGS:-} -C target-feature=+neon" \
+    CARGO_TARGET_DIR="$ROOT/target/jibo-neon" \
+    cargo "+$TC" build --locked --release --target "$T" -p needle-jibo --features neon
+  cp "target/jibo-neon/$T/release/needle-jibo" "$OUT/needle-jibo-neon"
+  n=$(${OBJDUMP:-arm-linux-gnueabihf-objdump} -d "$OUT/needle-jibo-neon" | grep -cE 'vmla\.f32[[:space:]]+q1[23]' || true)
+  [ "$n" -ge 6 ] || { echo "needle-jibo-neon: the NEON CQ kernels are missing ($n VMLA)" >&2; exit 1; }
+fi
 
 # The C operation benchmark (scalar, NEON, desktop-GL compute). C99 for Linaro GCC 4.8.4; libGL
 # and libX11 are opened with dlopen, so it links libc, libm and libdl only.
@@ -56,7 +69,9 @@ cp "target/$T/release/needle-jibo" "target/$T/release/needle-rs" "$OUT/"
 
 READELF=${READELF:-arm-linux-gnueabihf-readelf}
 "$READELF" -h -A -l -d --version-info "$OUT/needle-jibo" > "$OUT/needle-jibo.readelf.txt"
-"$HERE/scripts/check-jibo-abi.sh" "$OUT/needle-jibo" "$OUT/needle-rs" "$OUT/jibo-cq-bench" | tee "$OUT/abi-check.txt"
+bins=("$OUT/needle-jibo" "$OUT/needle-rs" "$OUT/jibo-cq-bench")
+[ -f "$OUT/needle-jibo-neon" ] && bins+=("$OUT/needle-jibo-neon")
+"$HERE/scripts/check-jibo-abi.sh" "${bins[@]}" | tee "$OUT/abi-check.txt"
 
 {
   echo "{"
@@ -71,6 +86,7 @@ READELF=${READELF:-arm-linux-gnueabihf-readelf}
   echo "  \"cc\": \"$(${JIBO_CC:-arm-linux-gnueabihf-gcc} --version | head -1)\","
   echo "  \"needle_jibo_sha256\": \"$(sha256sum "$OUT/needle-jibo" | cut -d' ' -f1)\","
   echo "  \"needle_rs_sha256\": \"$(sha256sum "$OUT/needle-rs" | cut -d' ' -f1)\","
+  if [ -f "$OUT/needle-jibo-neon" ]; then echo "  \"needle_jibo_neon_sha256\": \"$(sha256sum "$OUT/needle-jibo-neon" | cut -d' ' -f1)\","; fi
   echo "  \"jibo_cq_bench_sha256\": \"$(sha256sum "$OUT/jibo-cq-bench" | cut -d' ' -f1)\""
   echo "}"
 } > "$OUT/build-manifest.json"

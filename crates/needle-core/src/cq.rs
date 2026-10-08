@@ -862,6 +862,27 @@ pub const ACC_LANES: usize = 8;
 fn dot_group<const P: usize>(lut: &[f32], gbytes: &[u8], gx: &[f32]) -> f32 {
     debug_assert_eq!(ACC_LANES % P, 0);
     let per_iter = ACC_LANES / P;
+
+    // ARMv7 NEON: the same lanes in the same order, in two q registers (cq_neon.rs).
+    #[cfg(all(target_arch = "arm", feature = "neon"))]
+    if !gbytes.is_empty()
+        && gbytes.len() % per_iter == 0
+        && gx.len() >= gbytes.len() * P
+        && lut.len() >= 256 * P
+        && (P == 4 || P == 2)
+    {
+        let iters = gbytes.len() / per_iter;
+        // Safety: the bounds just checked are the ones each kernel documents; every LUT index
+        // is a byte, so below 256.
+        let lanes = unsafe {
+            if P == 4 {
+                crate::cq_neon::lut4_lanes(lut.as_ptr(), gbytes.as_ptr(), gx.as_ptr(), iters)
+            } else {
+                crate::cq_neon::lut2_lanes(lut.as_ptr(), gbytes.as_ptr(), gx.as_ptr(), iters)
+            }
+        };
+        return lanes.iter().sum();
+    }
     let mut lanes = [0.0f32; ACC_LANES];
 
     let full = gbytes.len() - gbytes.len() % per_iter;
@@ -903,6 +924,12 @@ fn dot_group<const P: usize>(lut: &[f32], gbytes: &[u8], gx: &[f32]) -> f32 {
 fn group_dot_lanes(u: &[f32], x: &[f32]) -> f32 {
     debug_assert_eq!(u.len(), x.len());
     let chunks = u.len() / ACC_LANES;
+    #[cfg(all(target_arch = "arm", feature = "neon"))]
+    if chunks > 0 && u.len() == x.len() && u.len() % ACC_LANES == 0 {
+        // Safety: both slices hold exactly `chunks * 8` floats.
+        let lanes = unsafe { crate::cq_neon::lanes8(u.as_ptr(), x.as_ptr(), chunks) };
+        return lanes.iter().sum();
+    }
     let mut lanes = [0.0f32; ACC_LANES];
     for c in 0..chunks {
         let uu: &[f32; ACC_LANES] = u[c * ACC_LANES..(c + 1) * ACC_LANES].try_into().unwrap();

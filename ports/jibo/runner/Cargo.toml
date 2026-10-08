@@ -17,6 +17,8 @@ path = "src/main.rs"
 # `parallel` turns on needle-core's rayon kernels for host comparisons only.
 default = []
 parallel = ["needle-infer/parallel"]
+# ARMv7 NEON CQ kernels; build with JIBO_RUSTFLAGS="-C target-feature=+neon" (build-jibo.sh --neon).
+neon = ["needle-infer/neon"]
 
 [dependencies]
 needle-infer = { path = "../../../crates/needle-infer" }

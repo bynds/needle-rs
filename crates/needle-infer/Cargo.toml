@@ -20,6 +20,7 @@ default = []
 # Forwards to needle-core's rayon-backed row splitting. Left off by default so
 # needle-wasm and embedded consumers are unaffected; native front ends enable it.
 parallel = ["needle-core/parallel"]
+neon = ["needle-core/neon"]
 
 [dependencies]
 needle-core = { path = "../needle-core", version = "0.3.1" }
