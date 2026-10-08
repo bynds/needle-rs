@@ -1,0 +1,24 @@
+# scripts/c-check.sh --san --arm (x86-64 and ASan+UBSan builds), model sha256 c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38, source cefde7648e86e68e77ae8e9fd7708b3c9dbe4364 (C sources; later commits change docs and scripts only)
+# 'PASS' = 0 mismatches (bit equality); see ports/jibo/c/README.md for each gate
+PASS x86 math
+PASS x86 tokenizer
+PASS x86 json
+PASS x86 grammar
+PASS x86 runner
+PASS x86 cq
+PASS x86 model
+PASS x86 model-d4
+PASS x86 model-d13
+PASS x86 corrupt
+PASS x86 serve-edge
+PASS san math
+PASS san tokenizer
+PASS san json
+PASS san grammar
+PASS san runner
+PASS san cq
+PASS san model
+PASS san model-d4
+PASS san model-d13
+PASS san corrupt
+PASS san serve-edge

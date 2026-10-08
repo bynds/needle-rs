@@ -139,7 +139,7 @@ with both runners under other policies.
 | `requests.jsonl` + `tools-extended.json` | 21 | `--debug-text --confidence` | **0** | strict, off, report with `--min-confidence 0.5`: **0, 0, 0** |
 | `requests.jsonl` + `tools-extended.json` | 21 | `--debug-text --constrain --kv-int8` | **0** | |
 | `c-parity-edge.jsonl` + `tools-extended.json` | 28 lines (27 answered, 1 blank) | `--debug-text --max-total-tokens 600` | **0** | |
-| `suite-dev` + `suite-heldout` + `suite-tools.json` | 195 | `--debug-text --confidence` | pending (running) | strict, off with `--min-confidence 0.6`: pending |
+| `suite-dev` + `suite-heldout` + `suite-tools.json` | 195 | `--debug-text --confidence` | **0** | strict, off with `--min-confidence 0.6`: **0, 0** |
 
 **Measured (x86-64).** The edge file covers:
 - a health line;

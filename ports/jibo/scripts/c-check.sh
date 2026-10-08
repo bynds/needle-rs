@@ -131,7 +131,10 @@ if [ $ARM = 1 ]; then
   if [ $FULL = 1 ]; then for f in 0 1 2 3 5; do qemu-arm -L "$SYSROOT" "$RA/math_ref" exh "$D/exh-arm_$f.bin" $f; done; fi
   for v in plain neon; do
     say "build: armv7 $v"
-    build "$WORK/arm-$v" CC="$STANDIN" CFLAGS="-O2 $([ $v = neon ] && echo -DND_NEON)"
+    # The float ABI of build-jibo.sh's binaries: VFPv3-D16 for plain (the Rust baseline), NEON.
+    if [ $v = plain ]; then fpu=vfpv3-d16; else fpu=neon; fi
+    build "$WORK/arm-$v" CC="$STANDIN" ARCH="-march=armv7-a -mfpu=$fpu -mfloat-abi=hard" \
+      CFLAGS="-O2 $([ $v = neon ] && echo -DND_NEON)"
     gate "arm-$v abi" "$HERE/scripts/check-jibo-abi.sh" "$WORK/arm-$v/needle-jibo-c"
     run_suite "arm-$v" "qemu-arm -L $SYSROOT" "$WORK/arm-$v" "-arm"
   done
