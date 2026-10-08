@@ -301,7 +301,9 @@ static int load_layer(const nd_cact *c, const nd_cfg *cfg, const layer_idx *l, n
   F(out->mlp.w3b, l->mlp[10], bb * bb);
   cv = &c->recs[l->mlp[11]];
   out->mlp.cond_rank = cv->shape[1];
-  if (cv->shape[0] != d || out->mlp.cond_rank == 0 || out->mlp.cond_rank > 1024) {
+  /* The rank is the record's second dimension; its first is not read (the length check below
+   * is what guards every access), as in needle-infer. */
+  if (out->mlp.cond_rank == 0 || out->mlp.cond_rank > 1024) {
     nd_seterr(e, "cond_v shape [%zu, %zu] does not fit d_model %zu", cv->shape[0], cv->shape[1], d);
     return ND_E_FORMAT;
   }
@@ -472,6 +474,20 @@ static int slice_head(nd_head *h, const size_t *kept, size_t depth, size_t d) {
   return ND_OK;
 }
 
+/* nd_cact_floats with an exact count, 0 included (there `want == 0` means any count). */
+static int exact_floats(const nd_cact *c, size_t idx, size_t n, float **out, nd_err *e) {
+  size_t got;
+  int rc = nd_cact_floats(c, idx, 0, out, &got, e);
+  if (rc) return rc;
+  if (got != n) {
+    free(*out);
+    *out = NULL;
+    nd_seterr(e, "tensor %zu holds %zu values, the geometry needs %zu", idx, got, n);
+    return ND_E_FORMAT;
+  }
+  return ND_OK;
+}
+
 static int load_perm(const nd_cact *c, size_t idx, size_t n, uint32_t **out, nd_err *e) {
   float *v;
   size_t i;
@@ -613,7 +629,7 @@ int nd_model_load(const nd_cact *c, size_t depth, nd_model **out, nd_err *e) {
     if ((rc = load_cq(c, lo.engrams[s][0], &m->engrams[ns].tables, e)) ||
         (rc = load_cq(c, lo.engrams[s][1], &m->engrams[ns].key_proj, e)) ||
         (rc = load_cq(c, lo.engrams[s][2], &m->engrams[ns].value_proj, e)) ||
-        (rc = nd_cact_floats(c, lo.engrams[s][3], parent.conv_taps * parent.d_model, &m->engrams[ns].taps, NULL, e)))
+        (rc = exact_floats(c, lo.engrams[s][3], parent.conv_taps * parent.d_model, &m->engrams[ns].taps, e)))
       goto fail;
     ns++;
   }

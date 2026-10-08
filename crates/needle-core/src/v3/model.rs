@@ -105,6 +105,94 @@ fn quant_rows(x: &mut [f32], seq: usize, heads: usize, head_dim: usize) {
     }
 }
 
+/// Every decoded vector against the length the forward pass indexes it at.
+///
+/// The forward pass slices these by the geometry, so a container whose FP16 records are shorter
+/// (or whose geometry is degenerate) would otherwise load and then panic, which a release build
+/// turns into an abort, at the first request; one whose records are longer would run on the
+/// wrong values. Both are refused here instead.
+fn check_shapes(
+    cfg: &V3Config,
+    layers: &[V3Layer],
+    mhc: &V3Mhc,
+    engrams: &[V3EngramSite],
+    final_norm: &[f32],
+    perms: &HadaPerms,
+) -> Result<(), &'static str> {
+    let (d, qk, hn) = (cfg.d_model, cfg.qk_head_dim, cfg.hada_n);
+    let e = &cfg.engram;
+    if d == 0
+        || cfg.mhc_lanes == 0
+        || cfg.num_heads == 0
+        || qk == 0
+        || qk % 2 != 0
+        || cfg.v_head_dim == 0
+        || cfg.max_seq_len == 0
+        || hn < d
+        || !hn.is_power_of_two()
+        || cfg.vocab_size == 0
+        || e.slots == 0
+        || e.sub_dim == 0
+    {
+        return Err("geometry the forward pass cannot run");
+    }
+    let (ba, bb) = super::kernels::hada_blocks(hn);
+    let taps = cfg.qkv_conv_taps;
+    for l in layers {
+        // No conv declared: no taps. Declared: exactly (taps, dim).
+        let conv = |v: &[f32], dim: usize| Some(v.len()) == taps.checked_mul(dim);
+        let m = &l.mlp;
+        if l.norm_in.len() != d
+            || !conv(&l.q_taps, cfg.q_dim())
+            || !conv(&l.k_taps, cfg.k_dim())
+            || !conv(&l.v_taps, cfg.v_dim())
+            || l.q_norm.len() != qk
+            || l.k_norm.len() != qk
+            || l.post_norm.len() != d
+            || l.pre_hada.len() != d
+        {
+            return Err("a layer's norm, gate or conv tensor does not match geometry");
+        }
+        if [&m.d1, &m.d2, &m.b2, &m.d3, &m.d4]
+            .iter()
+            .any(|v| v.len() != hn)
+            || [&m.w1.0, &m.w2.0, &m.w3.0]
+                .iter()
+                .any(|v| v.len() != ba * ba)
+            || [&m.w1.1, &m.w2.1, &m.w3.1]
+                .iter()
+                .any(|v| v.len() != bb * bb)
+            || m.cond_rank == 0
+            || m.cond_rank > 1024
+            || m.cond_v.len() != d * m.cond_rank
+            || m.cond_u.len() != m.cond_rank * hn
+        {
+            return Err("a layer's MLP tensor does not match geometry");
+        }
+    }
+    let (n, layers_n) = (cfg.mhc_lanes, cfg.num_layers);
+    if mhc.a_pre.len() != layers_n
+        || mhc.a_post.len() != layers_n
+        || mhc.a_res.len() != layers_n
+        || mhc.b_pre.len() != layers_n * n
+        || mhc.b_post.len() != layers_n * n
+        || mhc.b_res.len() != layers_n * n * n
+    {
+        return Err("mHC scalars do not match geometry");
+    }
+    if engrams.iter().any(|s| s.taps.len() != e.conv_taps * d) {
+        return Err("engram conv taps do not match geometry");
+    }
+    if final_norm.len() != d {
+        return Err("final_norm does not match geometry");
+    }
+    let perm_ok = |p: &[u32]| p.len() == hn && p.iter().all(|&i| (i as usize) < hn);
+    if !perm_ok(&perms.p1) || !perm_ok(&perms.p2) {
+        return Err("Hadamard permutation does not match geometry");
+    }
+    Ok(())
+}
+
 impl V3Model {
     pub fn new(
         cfg: V3Config,
@@ -124,6 +212,7 @@ impl V3Model {
         if embedding.out_feat != cfg.vocab_size || embedding.in_feat != cfg.d_model {
             return Err("embedding shape does not match geometry");
         }
+        check_shapes(&cfg, &layers, &mhc, &engrams, &final_norm, &perms)?;
         let embed_scale = sqrt(cfg.d_model as f32);
         Ok(Self {
             cfg,

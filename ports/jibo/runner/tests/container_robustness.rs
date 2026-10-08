@@ -3,7 +3,9 @@
 //! Release builds abort on panic, so on the robot a panic in the loader is a dead service, not an
 //! error message. This corrupts one field at a time of the real `needle3.cact` (header words,
 //! directory records, the tokenizer blob, truncations) and requires every load to come back as
-//! `Ok` or `Err`. Run it under ARMv7 emulation too: 32-bit `usize` is where an unchecked product
+//! `Ok` or `Err`, and every container that loads to survive a short prefill: a loader that accepts
+//! what the forward pass then indexes out of bounds only moves the abort to the first request.
+//! Run it under ARMv7 emulation too: 32-bit `usize` is where an unchecked product
 //! of two header fields wraps instead of overflowing visibly.
 //!
 //! Needs `weights/needle3.cact` (or `NEEDLE_JIBO_CACT`). Without it the test skips loudly, and
@@ -47,7 +49,15 @@ fn survives(what: &str, bytes: Vec<u8>, panics: &mut Vec<String>) -> bool {
     if std::env::var_os("NEEDLE_JIBO_TRACE").is_some() {
         eprintln!("case: {what}");
     }
-    match catch_unwind(AssertUnwindSafe(|| V3Engine::from_bytes(bytes).is_ok())) {
+    let run = || match V3Engine::from_bytes(bytes) {
+        Err(_) => false,
+        Ok(e) => {
+            let mut cache = needle_core::v3::V3Cache::new(&e.model.cfg, 8);
+            e.model.prefill(&[2, 10, 20, 30], &mut cache);
+            true
+        }
+    };
+    match catch_unwind(AssertUnwindSafe(run)) {
         Ok(ok) => ok,
         Err(p) => {
             let msg = p
