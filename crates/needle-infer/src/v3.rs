@@ -34,6 +34,9 @@ pub fn config_from_geometry(g: &CactV3Geometry) -> Result<V3Config, V3GeometryEr
         });
     }
     let heads = g.num_engram_tables / orders.len();
+    if heads == 0 {
+        return Err(V3GeometryError::NoEngramTables);
+    }
     let expect_sub_dim = g.d_model / (orders.len() * heads);
     if expect_sub_dim != g.engram_sub_dim {
         return Err(V3GeometryError::SubDimMismatch {
@@ -81,15 +84,27 @@ pub fn config_from_geometry(g: &CactV3Geometry) -> Result<V3Config, V3GeometryEr
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum V3GeometryError {
     NoEngramOrders,
-    TableCountNotDivisible { tables: usize, orders: usize },
-    SubDimMismatch { declared: usize, derived: usize },
-    HeadsNotDivisible { heads: usize, kv_heads: usize },
+    /// Zero hash tables: no head count to divide the width by.
+    NoEngramTables,
+    TableCountNotDivisible {
+        tables: usize,
+        orders: usize,
+    },
+    SubDimMismatch {
+        declared: usize,
+        derived: usize,
+    },
+    HeadsNotDivisible {
+        heads: usize,
+        kv_heads: usize,
+    },
 }
 
 impl core::fmt::Display for V3GeometryError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::NoEngramOrders => write!(f, "container declares no engram orders"),
+            Self::NoEngramTables => write!(f, "container declares no engram tables"),
             Self::TableCountNotDivisible { tables, orders } => write!(
                 f,
                 "engram tables {tables} is not a multiple of {orders} orders, \

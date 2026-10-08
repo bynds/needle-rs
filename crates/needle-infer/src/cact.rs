@@ -101,6 +101,14 @@ pub enum CactError {
     },
     /// Geometry field that cannot be zero, is.
     BadGeometry(&'static str),
+    /// A geometry field (or product of fields) is outside what any container can hold. Checked
+    /// before anything is sized from it: on a 32-bit target an unchecked product wraps, and an
+    /// allocation sized from a hostile header aborts the process instead of returning an error.
+    GeometryOutOfBounds {
+        field: &'static str,
+        value: u64,
+        max: u64,
+    },
     /// `heads.manifest` length is not consistent with the trailing tensor count.
     BadHeadManifest {
         extra: usize,
@@ -164,6 +172,9 @@ impl fmt::Display for CactError {
                 "tensor {index} ({what}): shape {got:?} does not match geometry {want:?}"
             ),
             Self::BadGeometry(field) => write!(f, "header field {field} must be non-zero"),
+            Self::GeometryOutOfBounds { field, value, max } => {
+                write!(f, "header field {field} is {value}, above the bound {max}")
+            }
             Self::BadHeadManifest { extra } => write!(
                 f,
                 "{extra} trailing tensors is not 1 + 3*heads for any head count"
@@ -385,6 +396,82 @@ impl CactV3Geometry {
             engram_sites: take(32, num_sites, 16),
             rope_theta: f32::from_bits(w[48]),
         })
+    }
+
+    /// Reject a geometry no real container could have, before anything is allocated from it.
+    ///
+    /// The bounds are far above any shipped Needle 3 (768 wide, 20 blocks, an 8192 vocabulary)
+    /// and exist so that every size derived from them fits a 32-bit `usize` with room to spare.
+    /// `file_len` bounds the tensor count: each one needs a directory record.
+    pub fn check_bounds(&self, file_len: usize) -> Result<(), CactError> {
+        // Products are taken in u64: two fields that each pass their own bound can still wrap a
+        // 32-bit usize when multiplied.
+        let out = |field: &'static str, value: u64, max: usize| -> Result<(), CactError> {
+            if value > max as u64 {
+                return Err(CactError::GeometryOutOfBounds {
+                    field,
+                    value,
+                    max: max as u64,
+                });
+            }
+            Ok(())
+        };
+        let w = |v: usize| v as u64;
+        const DIM: usize = 1 << 16;
+        let records = file_len.saturating_sub(HEADER_BYTES_V3) / REC_BYTES;
+        out("num_tensors", w(self.num_tensors), records)?;
+        // The global mask has one bit per layer.
+        out("num_layers", w(self.num_layers), 64)?;
+        out("vocab_size", w(self.vocab_size), 1 << 20)?;
+        out("out_vocab", w(self.out_vocab), self.vocab_size)?;
+        for (field, v) in [
+            ("d_model", self.d_model),
+            ("num_heads", self.num_heads),
+            ("num_kv_heads", self.num_kv_heads),
+            ("qk_head_dim", self.qk_head_dim),
+            ("v_head_dim", self.v_head_dim),
+            ("hada_n", self.hada_n),
+            ("engram_sub_dim", self.engram_sub_dim),
+        ] {
+            out(field, w(v), DIM)?;
+        }
+        out("mhc_lanes", w(self.mhc_lanes), 64)?;
+        out(
+            "num_heads * qk_head_dim",
+            w(self.num_heads) * w(self.qk_head_dim),
+            DIM,
+        )?;
+        out(
+            "num_heads * v_head_dim",
+            w(self.num_heads) * w(self.v_head_dim),
+            DIM,
+        )?;
+        out(
+            "mhc_lanes * d_model",
+            w(self.mhc_lanes) * w(self.d_model),
+            DIM,
+        )?;
+        out("max_seq_len", w(self.max_seq_len), 1 << 20)?;
+        out("sliding_window", w(self.sliding_window), 1 << 20)?;
+        out("kv_window", w(self.kv_window), 1 << 20)?;
+        out("qkv_conv_taps", w(self.qkv_conv_taps), 64)?;
+        out("engram_conv_taps", w(self.engram_conv_taps), 64)?;
+        out("engram_conv_dilation", w(self.engram_conv_dilation), 64)?;
+        out("engram_seed_heads", w(self.engram_seed_heads), 1 << 10)?;
+        out("num_engram_tables", w(self.num_engram_tables), 1 << 10)?;
+        out("engram_slots", w(self.engram_slots), 1 << 24)?;
+        out(
+            "num_engram_tables * engram_slots",
+            w(self.num_engram_tables) * w(self.engram_slots),
+            1 << 28,
+        )?;
+        for &o in &self.engram_orders {
+            out("engram_orders[i]", w(o), 16)?;
+        }
+        for &l in &self.engram_sites {
+            out("engram_sites[i]", w(l), self.num_layers.saturating_sub(1))?;
+        }
+        Ok(())
     }
 
     /// Layers that attend over the whole sequence rather than
@@ -1009,7 +1096,9 @@ impl CactV3 {
         if geom.codebook_len != cq::CODEBOOK_LEN {
             return Err(CactError::BadCodebookLen(geom.codebook_len));
         }
+        geom.check_bounds(raw.len())?;
         let dir_start = HEADER_BYTES_V3 + geom.codebook_len * 4;
+        // Bounded by check_bounds: num_tensors * REC_BYTES <= raw.len().
         let dir_end = dir_start + geom.num_tensors * REC_BYTES;
         if raw.len() < dir_end {
             return Err(CactError::TooShort {

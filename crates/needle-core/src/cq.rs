@@ -189,7 +189,7 @@ impl CqWeight {
         if out_feat == 0 || in_feat == 0 {
             return Err(CqError::EmptyShape);
         }
-        if group == 0 || !group.is_multiple_of(8) || !group.is_power_of_two() {
+        if group == 0 || group > MAX_GROUP || !group.is_multiple_of(8) || !group.is_power_of_two() {
             // Power-of-two: the group is rotated by a Walsh–Hadamard matrix.
             // Multiple of 8: keeps every group byte-aligned inside a packed row.
             return Err(CqError::BadGroup(group));
@@ -201,14 +201,38 @@ impl CqWeight {
             codebook_slice(codebook, bits)?.to_vec()
         };
 
-        let in_padded = in_feat.div_ceil(group) * group;
+        // Checked: the shapes come from a file, and on a 32-bit target an unchecked product
+        // wraps to a small size that passes the length test below and indexes out of bounds
+        // later. A size that does not fit `usize` cannot be in `blob`, so it is a short blob.
+        let in_padded = in_feat
+            .div_ceil(group)
+            .checked_mul(group)
+            .ok_or(CqError::ShortBlob {
+                need: usize::MAX,
+                got: blob.len(),
+            })?;
+        if in_padded > usize::MAX / 8 {
+            // packed_row_bytes multiplies by the width (at most 4) before dividing by 8.
+            return Err(CqError::ShortBlob {
+                need: usize::MAX,
+                got: blob.len(),
+            });
+        }
         let num_groups = in_padded / group;
         let row_bytes = packed_row_bytes(in_padded, bits);
-        let n_packed = out_feat * row_bytes;
-        let n_norm_bytes = out_feat * num_groups * 2;
-        if blob.len() < n_packed + n_norm_bytes {
+        let need = out_feat
+            .checked_mul(row_bytes)
+            .and_then(|p| Some((p, out_feat.checked_mul(num_groups)?.checked_mul(2)?)))
+            .and_then(|(p, n)| Some((p, n, p.checked_add(n)?)));
+        let Some((n_packed, n_norm_bytes, total)) = need else {
             return Err(CqError::ShortBlob {
-                need: n_packed + n_norm_bytes,
+                need: usize::MAX,
+                got: blob.len(),
+            });
+        };
+        if blob.len() < total {
+            return Err(CqError::ShortBlob {
+                need: total,
                 got: blob.len(),
             });
         }
@@ -1376,6 +1400,16 @@ mod tests {
             Some(CqError::UnsupportedBits(7))
         );
         assert_eq!(err(&blob, 4, 128, 96, 2, &cb), Some(CqError::BadGroup(96)));
+        // Above MAX_GROUP the decode buffer would be indexed past its end.
+        assert_eq!(
+            err(&blob, 4, 4096, 2048, 2, &cb),
+            Some(CqError::BadGroup(2048))
+        );
+        // Shapes whose byte size does not fit usize (wrapping on 32-bit) are short, not wrapped.
+        assert!(matches!(
+            err(&blob, usize::MAX / 2, 1 << 20, 128, 4, &cb),
+            Some(CqError::ShortBlob { .. })
+        ));
         assert_eq!(
             err(&blob, 4, 128, 100, 2, &cb),
             Some(CqError::BadGroup(100))

@@ -130,6 +130,16 @@ impl SpTokenizer {
         if n_pieces == 0 {
             return Err(TokenizerError::Empty);
         }
+        // Every piece needs at least its fixed record, so the blob bounds the count. Checked
+        // before the vectors below are sized from it: an unchecked `n_pieces` from a damaged
+        // container is an allocation failure, which aborts rather than returning an error.
+        let most = (blob.len() - HDR_BYTES) / REC_FIXED;
+        if n_pieces > most {
+            return Err(TokenizerError::Truncated {
+                need: HDR_BYTES.saturating_add(n_pieces.saturating_mul(REC_FIXED)),
+                got: blob.len(),
+            });
+        }
 
         let mut pieces = Vec::with_capacity(n_pieces);
         let mut scores = Vec::with_capacity(n_pieces);
