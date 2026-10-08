@@ -36,6 +36,21 @@ pub enum StopReason {
     MaxTokens,
     /// The context window ran out.
     MaxSeqLen,
+    /// The caller's `keep_going` check asked to stop (a deadline, a shutdown).
+    /// Checked between tokens only: a prefill in flight runs to completion.
+    Cancelled,
+}
+
+/// Where the time of one generation went. Wall-clock, measured in the engine
+/// so a caller does not have to reconstruct phases from token callbacks.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct V3Timing {
+    /// Prompt assembly and tokenization.
+    pub tokenize: std::time::Duration,
+    /// The batched prefill, up to the first logits.
+    pub prefill: std::time::Duration,
+    /// Every decode step, grammar mask and detokenization after the prefill.
+    pub decode: std::time::Duration,
 }
 
 /// Generation settings.
@@ -87,6 +102,9 @@ pub struct V3Result {
     /// The prompt did not fit in the context and was cut. The answer is built
     /// on a partial prompt and should be treated with suspicion.
     pub prompt_truncated: bool,
+    /// Prompt length in tokens, BOS included, before any truncation.
+    pub prompt_tokens: usize,
+    pub timing: V3Timing,
 }
 
 /// A loaded Needle 3 model with its tokenizer.
@@ -195,13 +213,48 @@ impl V3Engine {
         query: &str,
         tools_json: &str,
         opts: &V3Options,
-        mut on_token: F,
+        on_token: F,
     ) -> V3Result
     where
         F: FnMut(u32, &str),
     {
+        self.generate_controlled(query, tools_json, opts, on_token, || true)
+    }
+
+    /// The token ids generation would prefill for this request, BOS included.
+    ///
+    /// Lets a caller admit or refuse a request on its real length before any
+    /// model compute, instead of finding out from `prompt_truncated` after.
+    pub fn prompt_ids(&self, query: &str, tools_json: &str, system: Option<&str>) -> Vec<u32> {
+        alloc_prompt_ids(
+            self.bos_id,
+            &self.tokenizer,
+            &build_prompt(query, tools_json, system),
+        )
+    }
+
+    /// As [`Self::generate_with`], and `keep_going` is asked before every
+    /// decode step; returning `false` stops with [`StopReason::Cancelled`].
+    pub fn generate_controlled<F, K>(
+        &self,
+        query: &str,
+        tools_json: &str,
+        opts: &V3Options,
+        mut on_token: F,
+        mut keep_going: K,
+    ) -> V3Result
+    where
+        F: FnMut(u32, &str),
+        K: FnMut() -> bool,
+    {
+        let t0 = Stopwatch::start();
         let prompt = build_prompt(query, tools_json, opts.system.as_deref());
         let mut ids = alloc_prompt_ids(self.bos_id, &self.tokenizer, &prompt);
+        let prompt_tokens = ids.len();
+        let mut timing = V3Timing {
+            tokenize: t0.elapsed(),
+            ..V3Timing::default()
+        };
 
         // A prompt longer than the context cannot be served. Truncating and
         // saying so beats running past the limit, where the global layers'
@@ -222,11 +275,14 @@ impl V3Engine {
         // full weight sweep per position; this pays it once per chunk, and the
         // result is bit-identical — `batched_prefill_leaves_the_cache_where_
         // stepping_would` asserts the continuation, not just the logits.
+        let t1 = Stopwatch::start();
         let mut logits = if ids.is_empty() {
             Vec::new()
         } else {
             self.model.prefill(&ids, &mut cache)
         };
+        timing.prefill = t1.elapsed();
+        let t2 = Stopwatch::start();
 
         let mut out_tokens = Vec::new();
         let mut emitted = String::new();
@@ -248,6 +304,10 @@ impl V3Engine {
         let mut in_tool_call = false;
 
         for _ in 0..budget {
+            if !keep_going() {
+                stop = StopReason::Cancelled;
+                break;
+            }
             if in_tool_call {
                 if let Some(g) = grammar.as_ref() {
                     let mask = g.logit_mask(self.model.cfg.logit_rows());
@@ -276,9 +336,9 @@ impl V3Engine {
             // tokens make up a character across several ids, so a per-piece
             // decode would split multi-byte text; this cannot.
             let full = self.tokenizer.decode(&out_tokens);
-            if full.len() > emitted.len() {
-                on_token(next, &full[emitted.len()..]);
-                emitted = full;
+            if let Some(delta) = stream_delta(&full, &emitted) {
+                on_token(next, delta);
+                emitted.push_str(delta);
             }
             ids.push(next);
 
@@ -300,9 +360,20 @@ impl V3Engine {
             }
             logits = self.model.decode_step(&mut cache, next);
         }
+        timing.decode = t2.elapsed();
+
+        let text = self.tokenizer.decode(&out_tokens);
+        // Whatever was held back (a trailing U+FFFD that never completed) goes out now, so the
+        // deltas still concatenate to `text`.
+        if let (Some(rest), Some(&last)) = (text.strip_prefix(emitted.as_str()), out_tokens.last())
+        {
+            if !rest.is_empty() {
+                on_token(last, rest);
+            }
+        }
 
         V3Result {
-            text: self.tokenizer.decode(&out_tokens),
+            text,
             tokens: out_tokens,
             stop: if prompt_truncated {
                 StopReason::MaxSeqLen
@@ -311,6 +382,8 @@ impl V3Engine {
             },
             positions: cache.pos(),
             prompt_truncated,
+            prompt_tokens,
+            timing,
         }
     }
 
@@ -400,6 +473,19 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     }
 }
 
+/// What `full` adds to the text already streamed, or `None` when nothing is ready.
+///
+/// Byte-fallback tokens spell one character over several ids, and the run is decoded lossily, so
+/// a character still missing its last bytes reads as U+FFFD (3 bytes) until it completes, and
+/// then as itself (often 4). Slicing `full` at the length already emitted would then cut inside
+/// a character, a panic, and with `panic = "abort"` the end of the process. So a trailing U+FFFD
+/// is held back until the next token resolves it, and only a true extension is emitted.
+fn stream_delta<'a>(full: &'a str, emitted: &str) -> Option<&'a str> {
+    full.trim_end_matches('\u{FFFD}')
+        .strip_prefix(emitted)
+        .filter(|d| !d.is_empty())
+}
+
 fn alloc_prompt_ids(bos: u32, tok: &SpTokenizer, prompt: &str) -> Vec<u32> {
     let mut ids = Vec::with_capacity(prompt.len() / 3 + 2);
     ids.push(bos);
@@ -439,6 +525,24 @@ fn sample(logits: &[f32], temperature: f32, rng: &mut SplitMix64) -> u32 {
         }
     }
     (logits.len() - 1) as u32
+}
+
+/// Elapsed wall time where the platform has a clock. `Instant::now` panics on
+/// `wasm32-unknown-unknown`, which the browser build targets; there every
+/// phase reads zero rather than taking the page down.
+struct Stopwatch(#[allow(dead_code)] Option<std::time::Instant>);
+
+impl Stopwatch {
+    fn start() -> Self {
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+        return Self(None);
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        return Self(Some(std::time::Instant::now()));
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        self.0.map(|t| t.elapsed()).unwrap_or_default()
+    }
 }
 
 /// SplitMix64 — small, seedable and reproducible, which is what sampling
@@ -531,6 +635,31 @@ mod tests {
         };
         assert_eq!(draw(42), draw(42), "same seed must replay");
         assert_ne!(draw(42), draw(43), "different seeds should diverge");
+    }
+
+    #[test]
+    fn a_character_split_across_byte_tokens_streams_whole() {
+        // "a 🙂" arriving as "a ", then three of the emoji's four bytes, then the last byte.
+        let emoji = "🙂".as_bytes();
+        let steps = [
+            "a ".to_string(),
+            String::from_utf8_lossy(&[b"a ", &emoji[..1]].concat()).into_owned(),
+            String::from_utf8_lossy(&[b"a ", &emoji[..3]].concat()).into_owned(),
+            "a 🙂!".to_string(),
+        ];
+        let mut emitted = String::new();
+        let mut deltas = Vec::new();
+        for full in &steps {
+            if let Some(d) = stream_delta(full, &emitted) {
+                deltas.push(d.to_string());
+                emitted.push_str(d);
+            }
+        }
+        assert_eq!(deltas, ["a ", "🙂!"]);
+        assert_eq!(emitted, "a 🙂!");
+        // A genuine replacement character is not lost: it goes out once text follows it.
+        assert_eq!(stream_delta("x\u{FFFD}y", "x"), Some("\u{FFFD}y"));
+        assert_eq!(stream_delta("x\u{FFFD}", "x"), None);
     }
 
     #[test]
