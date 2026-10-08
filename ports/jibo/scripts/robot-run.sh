@@ -15,7 +15,8 @@
 #   BUNDLE      the output of scripts/prepare-robot.sh (deploy only)
 #   JIBO_ENV    the shell prefix reproducing the game host's run.sh display access and library
 #               shim, e.g. 'DISPLAY=:0 LD_LIBRARY_PATH=/path/to/shim' (gl only)
-#   BIN         suite/smoke: needle-jibo (default) or needle-jibo-neon
+#   BIN         suite/smoke: needle-jibo (default), needle-jibo-neon, needle-jibo-c or
+#               needle-jibo-c-neon (the C99 translation; same options and output)
 #
 # Steps, in order (each later step runs `preflight.sh --quick` first and stops if it fails):
 #   env        uname, glibc, libgcc_s, df, MemAvailable, CPU features (before copying anything)

@@ -17,6 +17,9 @@
 # the NEON build side by side. Set JIBO_NO_NEON=1 to skip it. Rust 1.87 warns that `neon` is an
 # unstable -Ctarget-feature; it is applied all the same, and the build fails if it is not.
 #
+# Also builds needle-jibo-c and needle-jibo-c-neon, the C99 translation (ports/jibo/c), with the same
+# compiler: the first for the baseline float ABI (VFPv3-D16, no NEON), the second with -DND_NEON.
+#
 # Each package is built in its own cargo invocation. Building needle-jibo together with
 # needle-rs-cli would unify features and switch on the CLI's rayon `parallel` path in the runner.
 set -euo pipefail
@@ -67,9 +70,18 @@ fi
 "$LINKER" -O2 -std=c99 -march=armv7-a -mfpu=neon -mfloat-abi=hard -static-libgcc \
   -o "$OUT/jibo-cq-bench" "$HERE/backend/jibo-cq-bench.c" -ldl -lm
 
+# The C99 translation of the engine and runner (ports/jibo/c): libc, libm and libpthread only.
+for v in plain neon; do
+  if [ $v = plain ]; then arch="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"; extra=""; name=needle-jibo-c
+  else arch="-march=armv7-a -mfpu=neon -mfloat-abi=hard"; extra="-DND_NEON"; name=needle-jibo-c-neon; fi
+  make -s -C "$HERE/c" CC="$LINKER" OUT="$OUT/c-$v" ARCH="$arch" CFLAGS="-O2 $extra" "$OUT/c-$v/needle-jibo-c"
+  cp "$OUT/c-$v/needle-jibo-c" "$OUT/$name"
+  rm -rf "$OUT/c-$v"
+done
+
 READELF=${READELF:-arm-linux-gnueabihf-readelf}
 "$READELF" -h -A -l -d --version-info "$OUT/needle-jibo" > "$OUT/needle-jibo.readelf.txt"
-bins=("$OUT/needle-jibo" "$OUT/needle-rs" "$OUT/jibo-cq-bench")
+bins=("$OUT/needle-jibo" "$OUT/needle-rs" "$OUT/jibo-cq-bench" "$OUT/needle-jibo-c" "$OUT/needle-jibo-c-neon")
 [ -f "$OUT/needle-jibo-neon" ] && bins+=("$OUT/needle-jibo-neon")
 "$HERE/scripts/check-jibo-abi.sh" "${bins[@]}" | tee "$OUT/abi-check.txt"
 
@@ -87,6 +99,8 @@ bins=("$OUT/needle-jibo" "$OUT/needle-rs" "$OUT/jibo-cq-bench")
   echo "  \"needle_jibo_sha256\": \"$(sha256sum "$OUT/needle-jibo" | cut -d' ' -f1)\","
   echo "  \"needle_rs_sha256\": \"$(sha256sum "$OUT/needle-rs" | cut -d' ' -f1)\","
   if [ -f "$OUT/needle-jibo-neon" ]; then echo "  \"needle_jibo_neon_sha256\": \"$(sha256sum "$OUT/needle-jibo-neon" | cut -d' ' -f1)\","; fi
+  echo "  \"needle_jibo_c_sha256\": \"$(sha256sum "$OUT/needle-jibo-c" | cut -d' ' -f1)\","
+  echo "  \"needle_jibo_c_neon_sha256\": \"$(sha256sum "$OUT/needle-jibo-c-neon" | cut -d' ' -f1)\","
   echo "  \"jibo_cq_bench_sha256\": \"$(sha256sum "$OUT/jibo-cq-bench" | cut -d' ' -f1)\""
   echo "}"
 } > "$OUT/build-manifest.json"

@@ -27,7 +27,10 @@ are not speed claims.
 | Path | What it is |
 | --- | --- |
 | `runner/` (`needle-jibo`) | One loaded model, bounded requests on stdin/stdout or a 0660 Unix socket with a bounded queue. Authorized tool catalogue, admission on the real prompt length, deadlines, memory/thermal `busy` gates, schema validation, explicit outcomes, phase timings. Grounding check (`grounding.rs`). Serial (no rayon). Also `bench`, `regrade` and `dump-op`. |
-| `runner/tests/container_robustness.rs` | 1,511 single-field corruptions of the real container; every one must be refused or loaded, never panic. Runs under ARMv7 emulation. |
+| `runner/tests/container_robustness.rs` | 1,511 single-field corruptions of the real container; every one must be refused or loaded, never panic, and every one that loads must survive a prefill. Runs under ARMv7 emulation. |
+| `c/` (`needle-jibo-c`) | A C99 translation of the engine and the runner, bit-identical to needle-core and byte-identical to `needle-jibo` (see `c/README.md`). Needs only libc, libm and libpthread. |
+| `runner/examples/trace.rs`, `corrupt_cases.rs` | Reference stages (cells, logits, prefill, decode, head) and loader verdicts for the C port's gates. |
+| `scripts/c-check.sh`, `scripts/c-parity.py` | The C port's parity gates (x86-64, ASan+UBSan, ARMv7 under qemu) and the runner-against-runner request comparison. |
 | `client/needle-client.js` | ES5 client for the runner's socket (built-in `net` only): only a `candidate` reaches a handler, all or nothing. `needle-client.test.js` tests it. |
 | `../../crates/needle-core/src/cq_neon.rs` | The engine's ARMv7 NEON CQ kernels (feature `neon`, with `-C target-feature=+neon`); `needle-jibo-neon` is built with them. |
 | `backend/jibo-cq-bench.c` | One real operation (a CQ projection, a learned Kronecker MLP stage, or causal grouped-query attention) on scalar C, NEON and desktop-GL 4.3 compute, checked against the Rust engine's output and timed with uploads, fences and readback counted. |
@@ -306,6 +309,11 @@ On this branch, each its own commit with a regression test:
 - `needle-infer` loader: `CactV3Geometry::check_bounds` (fields and u64 products, before anything
   is sized), tokenizer piece count bounded by its blob, zero Engram tables rejected.
 - `needle-core`: `CqWeight::from_blob` checks its size arithmetic and enforces `MAX_GROUP`.
+- `needle-core`: `V3Model::new` checks every decoded vector against the length the forward pass
+  indexes it at, and the geometry against what it can run. Before this, 24 of the robustness
+  test's corruptions loaded and then aborted at the first request (one through a 17 GB
+  allocation), and 19 ran on wrong-sized tensors. The C port's loader found this; both loaders now
+  agree on all 1,511 cases.
 - `needle-core`: ARMv7 NEON CQ kernels (`cq_neon.rs`) behind the `neon` feature, in stable inline
   assembly. Default builds are unchanged. Stable Rust 1.87 sets no `cfg(target_feature)` for ARM
   features, so the feature is the switch and must come with `-C target-feature=+neon` (rustc warns
@@ -353,7 +361,7 @@ memory pressure.
 
 ## Not done yet
 
-- **Every physical Jibo measurement**: latency, CPU, peak and combined memory, thermals, effect on
+- **Every physical Jibo measurement**, for `needle-jibo-c` as for the Rust runner: latency, CPU, peak and combined memory, thermals, effect on
   the eye/vision/audio services, GL dispatch on the GK20A, and whether `needle-jibo-neon` is faster.
   Blocked on robot access; the bundle and steps are ready.
 - The GPU beyond single operations (one CQ projection, one Kronecker stage, the attention core):

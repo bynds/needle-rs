@@ -5,7 +5,7 @@
 #   JIBO_CC or JIBO_SYSROOT   as for build-jibo.sh
 #   MODEL                     default weights/needle3.cact; must match manifests/needle-model-sha256.txt
 #
-# OUT_DIR gets: needle-jibo, needle-jibo-neon, needle-rs, jibo-cq-bench, the model, fixtures/, client/, ops/ (dump-op reference vectors: four CQ/MLP operations at 16
+# OUT_DIR gets: needle-jibo, needle-jibo-neon, needle-jibo-c, needle-jibo-c-neon, needle-rs, jibo-cq-bench, the model, fixtures/, client/, ops/ (dump-op reference vectors: four CQ/MLP operations at 16
 # tokens for prefill and 1 for decode, and attention at 64 and 256 positions), preflight.sh, build-manifest.json, MANIFEST.sha256
 # ("sha256 bytes path" per file). robot-run.sh deploys it with BUNDLE=OUT_DIR.
 set -euo pipefail

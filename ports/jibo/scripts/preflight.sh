@@ -69,15 +69,15 @@ done
 [ -n "$gcc_s" ] && ok "libgcc_s.so.1" || bad "no libgcc_s.so.1 (Rust's unwinder library)"
 
 # 3. The binaries start
-for b in needle-jibo needle-jibo-neon jibo-cq-bench; do
-  [ -x "$b" ] || { [ "$b" = needle-jibo-neon ] && continue; bad "$b missing or not executable"; continue; }
+for b in needle-jibo needle-jibo-neon needle-jibo-c needle-jibo-c-neon jibo-cq-bench; do
+  [ -x "$b" ] || { case "$b" in needle-jibo-neon|needle-jibo-c|needle-jibo-c-neon) continue ;; esac; bad "$b missing or not executable"; continue; }
   $RUN ./"$b" >/dev/null 2>&1
   rc=$?
   [ $rc = 2 ] && ok "$b starts" || bad "$b exited $rc instead of printing usage (loader or ABI problem)"
 done
 
 # 4. Machine
-grep -q neon /proc/cpuinfo && ok "CPU reports NEON" || warn "CPU reports no NEON: do not run needle-jibo-neon"
+grep -q neon /proc/cpuinfo && ok "CPU reports NEON" || warn "CPU reports no NEON: do not run needle-jibo-neon or needle-jibo-c-neon"
 avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
 if [ -z "$avail" ]; then
   warn "no MemAvailable in /proc/meminfo"
