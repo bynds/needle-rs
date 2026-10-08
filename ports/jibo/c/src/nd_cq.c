@@ -228,41 +228,52 @@ static float group_dot_serial(const float *u, const float *x, size_t len) {
   return s;
 }
 
-/* dot_group<P>: LUT decode fused with the 8-lane dot (the matvec path). */
-static float dot_group(const nd_cq *w, const uint8_t *gbytes, size_t nbytes, const float *gx) {
-  size_t p = w->per_byte, per_iter = ND_LANES / p, full = nbytes - nbytes % per_iter, bi = 0, t, k;
-  float lanes[ND_LANES], acc;
+/* dot_group<P>: LUT decode fused with the 8-lane dot (the matvec path). Instantiated per P, as
+ * Rust's const generic is: with P a constant the compiler unrolls the decode. */
 #if ND_HAVE_NEON
-  float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);
-  for (; bi < full; bi += per_iter) {
-    float32x4_t v0, v1;
-    if (p == 4) {
-      v0 = vld1q_f32(w->lut + gbytes[bi] * 4);
-      v1 = vld1q_f32(w->lut + gbytes[bi + 1] * 4);
-    } else {
-      v0 = vcombine_f32(vld1_f32(w->lut + gbytes[bi] * 2), vld1_f32(w->lut + gbytes[bi + 1] * 2));
-      v1 = vcombine_f32(vld1_f32(w->lut + gbytes[bi + 2] * 2), vld1_f32(w->lut + gbytes[bi + 3] * 2));
-    }
-    a0 = vmlaq_f32(a0, v0, vld1q_f32(gx + bi * p));
-    a1 = vmlaq_f32(a1, v1, vld1q_f32(gx + bi * p + 4));
-  }
-  vst1q_f32(lanes, a0);
+#define DOT_GROUP_LANES(P)                                                                     \
+  float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);                                  \
+  for (; bi < full; bi += per_iter) {                                                          \
+    float32x4_t v0, v1;                                                                        \
+    if ((P) == 4) {                                                                            \
+      v0 = vld1q_f32(lut + gbytes[bi] * 4);                                                    \
+      v1 = vld1q_f32(lut + gbytes[bi + 1] * 4);                                                \
+    } else {                                                                                   \
+      v0 = vcombine_f32(vld1_f32(lut + gbytes[bi] * 2), vld1_f32(lut + gbytes[bi + 1] * 2));   \
+      v1 = vcombine_f32(vld1_f32(lut + gbytes[bi + 2] * 2), vld1_f32(lut + gbytes[bi + 3] * 2)); \
+    }                                                                                          \
+    a0 = vmlaq_f32(a0, v0, vld1q_f32(gx + bi * (P)));                                          \
+    a1 = vmlaq_f32(a1, v1, vld1q_f32(gx + bi * (P) + 4));                                      \
+  }                                                                                            \
+  vst1q_f32(lanes, a0);                                                                        \
   vst1q_f32(lanes + 4, a1);
-  (void)t;
 #else
-  for (k = 0; k < ND_LANES; k++) lanes[k] = 0.0f;
-  for (; bi < full; bi += per_iter) {
-    float vals[ND_LANES];
-    for (t = 0; t < per_iter; t++)
-      for (k = 0; k < p; k++) vals[t * p + k] = w->lut[gbytes[bi + t] * p + k];
-    for (k = 0; k < ND_LANES; k++) lanes[k] += vals[k] * gx[bi * p + k];
+#define DOT_GROUP_LANES(P)                                                                     \
+  for (k = 0; k < ND_LANES; k++) lanes[k] = 0.0f;                                              \
+  for (; bi < full; bi += per_iter) {                                                          \
+    float vals[ND_LANES];                                                                      \
+    size_t t;                                                                                  \
+    for (t = 0; t < per_iter; t++)                                                             \
+      for (k = 0; k < (P); k++) vals[t * (P) + k] = lut[gbytes[bi + t] * (P) + k];             \
+    for (k = 0; k < ND_LANES; k++) lanes[k] += vals[k] * gx[bi * (P) + k];                     \
   }
 #endif
-  acc = sum_lanes(lanes);
-  for (; bi < nbytes; bi++)
-    for (k = 0; k < p; k++) acc += w->lut[gbytes[bi] * p + k] * gx[bi * p + k];
-  return acc;
-}
+
+#define DEFINE_DOT_GROUP(P)                                                                    \
+  static float dot_group_##P(const float *lut, const uint8_t *gbytes, size_t nbytes,           \
+                             const float *gx) {                                                \
+    const size_t per_iter = ND_LANES / (P);                                                    \
+    size_t full = nbytes - nbytes % per_iter, bi = 0, k;                                       \
+    float lanes[ND_LANES], acc;                                                                \
+    DOT_GROUP_LANES(P)                                                                         \
+    acc = sum_lanes(lanes);                                                                    \
+    for (; bi < nbytes; bi++)                                                                  \
+      for (k = 0; k < (P); k++) acc += lut[gbytes[bi] * (P) + k] * gx[bi * (P) + k];           \
+    return acc;                                                                                \
+  }
+
+DEFINE_DOT_GROUP(4)
+DEFINE_DOT_GROUP(2)
 
 void nd_cq_matvec_rows_prepared(const nd_cq *w, const float *xh, size_t row_start, size_t rows, float *y) {
   size_t yi, g;
@@ -273,8 +284,12 @@ void nd_cq_matvec_rows_prepared(const nd_cq *w, const float *xh, size_t row_star
     float total = 0.0f;
     if (w->per_byte) {
       size_t bpg = w->group / w->per_byte;
-      for (g = 0; g < w->num_groups; g++)
-        total += norms[g] * dot_group(w, row + g * bpg, bpg, xh + g * w->group);
+      if (w->per_byte == 4)
+        for (g = 0; g < w->num_groups; g++)
+          total += norms[g] * dot_group_4(w->lut, row + g * bpg, bpg, xh + g * w->group);
+      else
+        for (g = 0; g < w->num_groups; g++)
+          total += norms[g] * dot_group_2(w->lut, row + g * bpg, bpg, xh + g * w->group);
     } else {
       size_t bits = w->bits, k;
       uint32_t mask = (1u << bits) - 1;

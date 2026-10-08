@@ -1,15 +1,9 @@
 //! math_ref.rs: reference generator for tests/test_math.c.
 //!
-//! Computes the Rust `libm` 0.2.16 results that nd_math.c must reproduce bit for bit. Build it as
-//! a throwaway binary outside the repository, with the same libm configuration as needle-core:
-//!
-//!   [dependencies]
-//!   libm = { version = "=0.2.16", default-features = false }
-//!   [[bin]]
-//!   name = "math_ref"
-//!   path = "<repo>/ports/jibo/c/tests/math_ref.rs"
-//!
-//! and run it for the target under test (x86_64 natively; armv7-unknown-linux-gnueabihf under
+//! Computes the Rust `libm` 0.2.16 results that nd_math.c must reproduce bit for bit, with the
+//! same libm configuration as needle-core (default features off; this crate's Cargo.toml pins
+//! it). Built as part of the nd-c-ref crate (ports/jibo/c/ref); scripts/c-check.sh runs it,
+//! for the target under test (x86_64 natively; armv7-unknown-linux-gnueabihf under
 //! qemu-arm). Modes:
 //!
 //!   math_ref cases OUT [small]   input/output records for every function (see below)
@@ -38,7 +32,11 @@ fn unary(f: u32) -> fn(f32) -> f32 {
 }
 
 fn canon(v: f32) -> u32 {
-    if v.is_nan() { 0x7fc0_0000 } else { v.to_bits() }
+    if v.is_nan() {
+        0x7fc0_0000
+    } else {
+        v.to_bits()
+    }
 }
 
 fn block_hash(f: fn(f32) -> f32, block: u32) -> u64 {
@@ -73,23 +71,99 @@ impl Rng {
 
 fn specials() -> Vec<f32> {
     let mut v = vec![
-        0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, -2.0, 3.0, -3.0, 10.0, -10.0, 100.0, 1e6, -1e6,
-        f32::INFINITY, f32::NEG_INFINITY, f32::NAN, -f32::NAN, f32::from_bits(0x7f80_0001),
-        f32::from_bits(0xffc1_2345), f32::MAX, -f32::MAX, f32::MIN_POSITIVE, -f32::MIN_POSITIVE,
-        f32::from_bits(1), f32::from_bits(0x8000_0001), f32::from_bits(0x007f_ffff),
-        f32::from_bits(0x807f_ffff), f32::from_bits(0x0040_0000), f32::EPSILON,
-        std::f32::consts::PI, -std::f32::consts::PI, std::f32::consts::FRAC_PI_2,
-        std::f32::consts::FRAC_PI_4, std::f32::consts::E, std::f32::consts::LN_2, 88.72284,
-        88.72283, -87.33655, -103.97208, -103.97209, 0.34657359, 1.03972077, 27.0 * 0.6931472,
-        9.0, 10.0001, 0.5493, 0.2554, 1e-30, -1e-30, 1.0e30, 16777216.0, 8388608.0, 2.5, -2.5,
-        1.0000001, 0.99999994, 105414350.0, 421657420.0, 1e38, -1e38, 100000.0,
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        -2.0,
+        3.0,
+        -3.0,
+        10.0,
+        -10.0,
+        100.0,
+        1e6,
+        -1e6,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        -f32::NAN,
+        f32::from_bits(0x7f80_0001),
+        f32::from_bits(0xffc1_2345),
+        f32::MAX,
+        -f32::MAX,
+        f32::MIN_POSITIVE,
+        -f32::MIN_POSITIVE,
+        f32::from_bits(1),
+        f32::from_bits(0x8000_0001),
+        f32::from_bits(0x007f_ffff),
+        f32::from_bits(0x807f_ffff),
+        f32::from_bits(0x0040_0000),
+        f32::EPSILON,
+        std::f32::consts::PI,
+        -std::f32::consts::PI,
+        std::f32::consts::FRAC_PI_2,
+        std::f32::consts::FRAC_PI_4,
+        std::f32::consts::E,
+        std::f32::consts::LN_2,
+        88.72284,
+        88.72283,
+        -87.33655,
+        -103.97208,
+        -103.97209,
+        0.34657359,
+        1.03972077,
+        27.0 * 0.6931472,
+        9.0,
+        10.0001,
+        0.5493,
+        0.2554,
+        1e-30,
+        -1e-30,
+        1.0e30,
+        16777216.0,
+        8388608.0,
+        2.5,
+        -2.5,
+        1.0000001,
+        0.99999994,
+        105414350.0,
+        421657420.0,
+        1e38,
+        -1e38,
+        100000.0,
     ];
     // every branch threshold of the six functions, and its neighbours
     for t in [
-        0x42aeac50u32, 0x42b17218, 0x42cff1b5, 0x3eb17218, 0x3f851592, 0x39000000, 0x3f3504f3,
-        0x3f490fda, 0x39800000, 0x407b53d1, 0x4016cbe3, 0x40e231d5, 0x40afeddf, 0x4dc90fdb,
-        0x3f0c9f54, 0x41200000, 0x3e82c578, 0x4195b844, 0x42b17217, 0x33000000, 0x3f7ffff8,
-        0x3f800007, 0x4d000000, 0x4b800000, 0x43000000, 0x43160000, 0x00800000,
+        0x42aeac50u32,
+        0x42b17218,
+        0x42cff1b5,
+        0x3eb17218,
+        0x3f851592,
+        0x39000000,
+        0x3f3504f3,
+        0x3f490fda,
+        0x39800000,
+        0x407b53d1,
+        0x4016cbe3,
+        0x40e231d5,
+        0x40afeddf,
+        0x4dc90fdb,
+        0x3f0c9f54,
+        0x41200000,
+        0x3e82c578,
+        0x4195b844,
+        0x42b17217,
+        0x33000000,
+        0x3f7ffff8,
+        0x3f800007,
+        0x4d000000,
+        0x4b800000,
+        0x43000000,
+        0x43160000,
+        0x00800000,
     ] {
         for d in [-2i32, -1, 0, 1, 2] {
             let b = (t as i32 + d) as u32;
@@ -105,7 +179,11 @@ fn cases(out: &str, small: bool) {
     w.write_all(b"NDMC").unwrap();
     let mut count = [0u64; 6];
     let mut put = |w: &mut BufWriter<File>, f: u32, a: f32, b: f32| {
-        let r = if f == 4 { libm::powf(a, b) } else { unary(f)(a) };
+        let r = if f == 4 {
+            libm::powf(a, b)
+        } else {
+            unary(f)(a)
+        };
         for v in [f, a.to_bits(), b.to_bits(), r.to_bits()] {
             w.write_all(&v.to_le_bytes()).unwrap();
         }
@@ -205,7 +283,8 @@ fn cases(out: &str, small: bool) {
     }
     for _ in 0..nrand {
         // near-1 bases, huge exponents (|y| > 2^27 branch) and integer exponents of negatives
-        let a = f32::from_bits(0x3f7f_fff0 + rng.u32() % 0x20) * if rng.u32() & 1 == 0 { 1.0 } else { -1.0 };
+        let a = f32::from_bits(0x3f7f_fff0 + rng.u32() % 0x20)
+            * if rng.u32() & 1 == 0 { 1.0 } else { -1.0 };
         let b = if rng.u32() & 1 == 0 {
             f32::from_bits(0x4d00_0000 + rng.u32() % 0x0100_0000)
         } else {
@@ -214,13 +293,17 @@ fn cases(out: &str, small: bool) {
         put(&mut w, 4, a, b);
     }
     w.flush().unwrap();
-    eprintln!("cases {out}: exp {} log {} sin {} cos {} pow {} tanh {}",
-        count[0], count[1], count[2], count[3], count[4], count[5]);
+    eprintln!(
+        "cases {out}: exp {} log {} sin {} cos {} pow {} tanh {}",
+        count[0], count[1], count[2], count[3], count[4], count[5]
+    );
 }
 
 fn exh(out: &str, f: u32) {
     let func = unary(f);
-    let nthreads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as u32;
+    let nthreads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1) as u32;
     let mut hashes = vec![0u64; 65536];
     std::thread::scope(|s| {
         let chunks: Vec<_> = hashes.chunks_mut((65536 / nthreads) as usize + 1).collect();

@@ -1,0 +1,22 @@
+# Reference generators for the C99 port's leaf-module tests (tests/test_*.c). Each binary computes,
+# with the Rust code the C transcribes, the outputs a C test must reproduce bit for bit. A
+# standalone workspace: not part of the needle-rs build, and never shipped.
+[package]
+name = "nd-c-ref"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+needle-infer = { path = "../../../../crates/needle-infer" }
+needle-jibo = { path = "../../runner" }
+serde = "1"
+serde_json = "=1.0.149"
+# The exact libm needle-core links (default features off), for math_ref.
+libm = { version = "=0.2.16", default-features = false }
+
+[profile.release]
+opt-level = 2
+debug = false

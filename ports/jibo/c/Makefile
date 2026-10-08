@@ -7,7 +7,7 @@ ARCH ?=
 WARN = -Wall -Wextra -Wdouble-promotion -Wshadow -Wstrict-prototypes -Wmissing-prototypes -pedantic
 CFLAGS ?= -O2
 ALL_CFLAGS = -std=c99 -D_POSIX_C_SOURCE=200809L $(WARN) -ffp-contract=off -fno-strict-aliasing $(ARCH) $(CFLAGS)
-LDLIBS = -lm
+LDLIBS = -lm -lpthread
 
 SRC = $(wildcard src/*.c)
 OBJ = $(SRC:src/%.c=$(OUT)/obj/%.o)
