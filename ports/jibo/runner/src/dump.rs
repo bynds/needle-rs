@@ -15,6 +15,9 @@
 //!   a.bin, b.bin   Kronecker: the stage's learned factors, f32 [ba, ba] and [bb, bb]
 //!   z.bin          Kronecker: inputs, f32 [tokens, ba * bb]
 //!   k.bin          Kronecker: aᵀ · Z · b per token, f32 [tokens, ba * bb]
+//!   q.bin, kk.bin, v.bin, o.bin   attention (`attn.global`, `attn.local<W>`): queries
+//!                  [tokens, heads, qk], keys [tokens, kv_heads, qk], values [tokens, kv_heads, v]
+//!                  and the engine's causal grouped-query attention over them [tokens, heads, v]
 
 use needle_infer::cact::CactV3;
 use needle_infer::v3::{config_from_geometry, V3Layout};
@@ -47,8 +50,9 @@ fn write_f32(path: &Path, v: &[f32]) -> std::io::Result<()> {
     f.flush()
 }
 
-/// `tensor` is `embedding`, `l<N>.<q_proj|k_proj|v_proj|gate_proj|out_proj>` or
-/// `l<N>.mlp.w<1|2|3>`.
+/// `tensor` is `embedding`, `l<N>.<q_proj|k_proj|v_proj|gate_proj|out_proj>`,
+/// `l<N>.mlp.w<1|2|3>`, or `attn.global` / `attn.local<W>` (the model's head geometry, seeded
+/// inputs, window W).
 pub fn dump(model: &Path, tensor: &str, tokens: usize, out: &Path) -> Result<String, String> {
     let bytes = std::fs::read(model).map_err(|e| format!("{}: {e}", model.display()))?;
     let model_sha256 = crate::sha256::hex(&bytes);
@@ -77,7 +81,44 @@ pub fn dump(model: &Path, tensor: &str, tokens: usize, out: &Path) -> Result<Str
         "activations=seeded normal (splitmix64 seed 7, Box-Muller)".into(),
     ];
 
-    if parts.len() == 3 && parts[1] == "mlp" {
+    if parts.first() == Some(&"attn") && parts.len() == 2 {
+        use needle_core::v3::attention::{attend, AttnDims, KvStore};
+        let window = match parts[1] {
+            "global" => None,
+            w => Some(
+                w.strip_prefix("local")
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .filter(|n| *n > 0)
+                    .ok_or(format!(
+                        "attention window in {tensor:?}: global or local<W>"
+                    ))?,
+            ),
+        };
+        let d = AttnDims {
+            seq: tokens,
+            num_heads: cfg.num_heads,
+            num_kv_heads: cfg.num_kv_heads,
+            qk_head_dim: cfg.qk_head_dim,
+            v_head_dim: cfg.v_head_dim,
+        };
+        let q = normals(7, tokens * d.num_heads * d.qk_head_dim);
+        let k = normals(8, tokens * d.num_kv_heads * d.qk_head_dim);
+        let v = normals(9, tokens * d.num_kv_heads * d.v_head_dim);
+        let mut o = vec![0.0f32; tokens * d.num_heads * d.v_head_dim];
+        attend(&q, KvStore::F32 { k: &k, v: &v }, d, window, &mut o);
+        write_f32(&out.join("q.bin"), &q).map_err(io)?;
+        write_f32(&out.join("kk.bin"), &k).map_err(io)?;
+        write_f32(&out.join("v.bin"), &v).map_err(io)?;
+        write_f32(&out.join("o.bin"), &o).map_err(io)?;
+        meta.extend([
+            "op=attn".into(),
+            format!("heads={}", d.num_heads),
+            format!("kv_heads={}", d.num_kv_heads),
+            format!("qk={}", d.qk_head_dim),
+            format!("vd={}", d.v_head_dim),
+            format!("window={}", window.unwrap_or(0)),
+        ]);
+    } else if parts.len() == 3 && parts[1] == "mlp" {
         let l = layer_of(parts[0])?;
         let m = layout.layers[l].mlp;
         let (ai, bi) = match parts[2] {

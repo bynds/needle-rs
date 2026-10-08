@@ -1,0 +1,104 @@
+[
+ {
+  "name": "start_timer",
+  "description": "Propose a countdown timer for a duration the user stated.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "seconds": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 86400
+    }
+   },
+   "required": [
+    "seconds"
+   ]
+  }
+ },
+ {
+  "name": "cancel_timer",
+  "description": "Propose cancelling the running timer.",
+  "parameters": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "set_alarm",
+  "description": "Propose an alarm at a clock time the user stated, in 24-hour time.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "hour": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 23
+    },
+    "minute": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 59
+    }
+   },
+   "required": [
+    "hour",
+    "minute"
+   ]
+  }
+ },
+ {
+  "name": "set_volume",
+  "description": "Propose a speaker volume level from 0 (mute) to 10 (loudest).",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "level": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 10
+    }
+   },
+   "required": [
+    "level"
+   ]
+  }
+ },
+ {
+  "name": "play_animation",
+  "description": "Propose one of the supported named animations.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "enum": [
+      "dance",
+      "nod",
+      "wave",
+      "spin"
+     ]
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "get_weather",
+  "description": "Propose looking up the weather for a city the user named.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "city": {
+     "type": "string",
+     "maxLength": 64
+    }
+   },
+   "required": [
+    "city"
+   ]
+  }
+ }
+]

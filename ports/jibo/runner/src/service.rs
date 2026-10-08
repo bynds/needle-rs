@@ -50,6 +50,42 @@ pub struct Options {
     pub confidence: bool,
     /// Include the raw completion in responses. Off by default: no transcript retention.
     pub debug_text: bool,
+    pub grounding: Grounding,
+    /// Hash the model on every start instead of trusting the `<model>.sha256` sidecar.
+    pub verify_model: bool,
+    /// Refuse to start unless the model's sha256 is this (lowercase hex). Always compared
+    /// against a freshly computed hash, never the sidecar.
+    pub expect_sha256: Option<String>,
+    /// Candidates whose confidence-head score is below this become `low_confidence`. Needs
+    /// `confidence`. Uncalibrated: tune on the dev split, report on the held-out one.
+    pub min_confidence: Option<f32>,
+}
+
+/// What to do with a candidate whose arguments the query does not state (`crate::grounding`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Grounding {
+    /// Do not check; `grounded` is null.
+    Off,
+    /// Check and report (`grounded`, `ungrounded`) but leave the status alone.
+    Report,
+    /// Check, and answer `needs_clarification` instead of `candidate` when an argument is not
+    /// stated. The proposed calls are returned as `rejected_calls`, so the application can ask.
+    #[default]
+    Enforce,
+    /// As `Enforce`, and enum values must be said too (a word of the query starts with them).
+    Strict,
+}
+
+impl Grounding {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(Self::Off),
+            "report" => Some(Self::Report),
+            "enforce" => Some(Self::Enforce),
+            "strict" => Some(Self::Strict),
+            _ => None,
+        }
+    }
 }
 
 pub struct Service {
@@ -58,6 +94,8 @@ pub struct Service {
     pub limits: Limits,
     pub opts: Options,
     pub model_sha256: String,
+    /// "computed" or "cache" (the sidecar, matched on size and mtime).
+    pub model_sha256_source: &'static str,
     pub model_bytes: usize,
     pub depth: usize,
     pub load_ms: f64,
@@ -88,6 +126,163 @@ fn stop_name(s: StopReason) -> &'static str {
 /// A response that never reached the model.
 pub fn refusal(id: &str, status: &str, detail: &str) -> Value {
     json!({"request_id": id, "status": status, "detail": detail})
+}
+
+/// The model's sha256, from the `<model>.sha256` sidecar when its recorded size and mtime still
+/// match the file, else computed (and the sidecar rewritten, if the directory allows).
+///
+/// Hashing 35 MB costs about 7% of a short request's instructions at load, seconds on the robot.
+/// The sidecar is a cache, not a check: it is trusted only on size and mtime, so `verify` (or an
+/// expected hash) always recomputes.
+fn model_hash(path: &std::path::Path, bytes: &[u8], verify: bool) -> (String, &'static str) {
+    let side = {
+        let mut p = path.as_os_str().to_owned();
+        p.push(".sha256");
+        std::path::PathBuf::from(p)
+    };
+    let stamp = std::fs::metadata(path).ok().and_then(|m| {
+        let t = m
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        Some(format!("{} {}", m.len(), t.as_nanos()))
+    });
+    if !verify {
+        if let (Some(stamp), Ok(text)) = (&stamp, std::fs::read_to_string(&side)) {
+            if let Some((hash, rest)) = text.trim().split_once(' ') {
+                if rest == stamp && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    return (hash.to_ascii_lowercase(), "cache");
+                }
+            }
+        }
+    }
+    let hash = crate::sha256::hex(bytes);
+    if let Some(stamp) = stamp {
+        // Best effort: a read-only model directory just means hashing again next time.
+        let _ = std::fs::write(&side, format!("{hash} {stamp}\n"));
+    }
+    (hash, "computed")
+}
+
+/// What a finished generation amounts to under the runner's policy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Verdict {
+    pub status: &'static str,
+    pub detail: String,
+    pub calls: Option<Value>,
+    /// Calls the policy withheld (ungrounded or low confidence), for the application to ask about.
+    pub rejected: Option<Value>,
+    pub grounded: Option<bool>,
+    pub ungrounded: Vec<String>,
+}
+
+impl Verdict {
+    /// Withhold a candidate scoring below `min`. Grounding is applied first, in `classify`.
+    pub fn gate_confidence(&mut self, min: Option<f32>, p: Option<f32>) {
+        if let (Some(min), Some(p), "candidate") = (min, p, self.status) {
+            if p < min {
+                self.status = "low_confidence";
+                self.detail = format!("confidence {p:.3} below {min}");
+                self.rejected = self.calls.take();
+            }
+        }
+    }
+}
+
+/// Classify a completion: stop reason, then markers and schema, then grounding. A pure function
+/// of its inputs, so `needle-jibo regrade` can re-apply a changed policy to saved completions
+/// without running the model again.
+#[allow(clippy::too_many_arguments)]
+pub fn classify(
+    catalogue: &Catalogue,
+    opts: &Options,
+    query: &str,
+    allowed: Option<&[String]>,
+    text: &str,
+    stop: StopReason,
+    prompt_truncated: bool,
+    budget: usize,
+) -> Verdict {
+    let mut v = Verdict {
+        status: "candidate",
+        detail: String::new(),
+        calls: None,
+        rejected: None,
+        grounded: None,
+        ungrounded: Vec::new(),
+    };
+    let mut set = |status: &'static str, detail: String| {
+        v.status = status;
+        v.detail = detail;
+    };
+    if prompt_truncated {
+        set("truncated", "the engine truncated the prompt".into());
+        return v;
+    }
+    match stop {
+        StopReason::Cancelled => set("timeout", "deadline reached during generation".into()),
+        StopReason::MaxTokens | StopReason::MaxSeqLen => set(
+            "incomplete",
+            format!("generation budget of {budget} tokens ran out"),
+        ),
+        StopReason::Eos | StopReason::ImEnd => match validate(text, catalogue, allowed) {
+            Outcome::Calls(c) => {
+                if opts.grounding != Grounding::Off {
+                    let m = crate::grounding::Mentions::read(query);
+                    for call in &c {
+                        if let Some(t) = catalogue.get(&call.name) {
+                            v.ungrounded.extend(crate::grounding::ungrounded(
+                                call,
+                                t,
+                                &m,
+                                opts.grounding == Grounding::Strict,
+                            ));
+                        }
+                    }
+                    v.grounded = Some(v.ungrounded.is_empty());
+                }
+                let calls = Value::Array(
+                    c.into_iter()
+                        .map(|c| json!({"name": c.name, "arguments": c.arguments}))
+                        .collect(),
+                );
+                if matches!(opts.grounding, Grounding::Enforce | Grounding::Strict)
+                    && v.grounded == Some(false)
+                {
+                    v.status = "needs_clarification";
+                    v.detail = format!("not stated in the request: {}", v.ungrounded.join(", "));
+                    v.rejected = Some(calls);
+                } else {
+                    v.calls = Some(calls);
+                }
+            }
+            Outcome::NoCall => {
+                v.status = "no_call";
+                v.detail = "the model chose no tool".into();
+                v.calls = Some(json!([]));
+            }
+            Outcome::NoMarker => set("invalid_output", "no <tool_call> in the completion".into()),
+            Outcome::Unterminated => set("invalid_output", "unterminated <tool_call>".into()),
+            Outcome::Malformed(d) | Outcome::Invalid(d) => set("invalid_output", d),
+            Outcome::Unsupported(d) => set("unsupported", d),
+            Outcome::NeedsClarification(d) => set("needs_clarification", d),
+        },
+    }
+    v
+}
+
+/// The engine's stop reason from its response name, for `regrade`.
+pub fn stop_from_name(s: &str) -> Option<StopReason> {
+    Some(match s {
+        "eos" => StopReason::Eos,
+        "im_end" => StopReason::ImEnd,
+        "max_tokens" => StopReason::MaxTokens,
+        "max_seq_len" => StopReason::MaxSeqLen,
+        "cancelled" => StopReason::Cancelled,
+        _ => return None,
+    })
 }
 
 /// A parsed request line.
@@ -172,7 +367,19 @@ impl Service {
     ) -> Result<Self, String> {
         let t = Instant::now();
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let model_sha256 = crate::sha256::hex(&bytes);
+        let (model_sha256, model_sha256_source) = model_hash(
+            path,
+            &bytes,
+            opts.verify_model || opts.expect_sha256.is_some(),
+        );
+        if let Some(want) = &opts.expect_sha256 {
+            if !want.eq_ignore_ascii_case(&model_sha256) {
+                return Err(format!(
+                    "{}: sha256 {model_sha256}, expected {want}",
+                    path.display()
+                ));
+            }
+        }
         let model_bytes = bytes.len();
         let engine = match depth {
             None => V3Engine::from_bytes(bytes),
@@ -195,6 +402,7 @@ impl Service {
             limits,
             opts,
             model_sha256,
+            model_sha256_source,
             model_bytes,
             depth,
             load_ms: ms(t.elapsed()),
@@ -214,6 +422,7 @@ impl Service {
         json!({
             "status": "ok",
             "model_sha256": self.model_sha256,
+            "model_sha256_source": self.model_sha256_source,
             "model_bytes": self.model_bytes,
             "load_ms": self.load_ms,
             "depth": self.depth,
@@ -222,6 +431,8 @@ impl Service {
             "max_seq_len": c.max_seq_len,
             "kv_precision": self.kv_name(),
             "constrained": self.opts.constrain,
+            "grounding": format!("{:?}", self.opts.grounding).to_lowercase(),
+            "min_confidence": self.opts.min_confidence,
             "confidence_head": self.engine.confidence.is_some(),
             "tools": self.catalogue.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
             "limits": {
@@ -315,66 +526,44 @@ impl Service {
             || deadline.is_none_or(|d| Instant::now() < d),
         );
 
-        let (status, detail, calls): (&str, String, Option<Value>) = if res.prompt_truncated {
-            ("truncated", "the engine truncated the prompt".into(), None)
-        } else {
-            match res.stop {
-                StopReason::Cancelled => {
-                    ("timeout", "deadline reached during generation".into(), None)
-                }
-                StopReason::MaxTokens | StopReason::MaxSeqLen => (
-                    "incomplete",
-                    format!("generation budget of {budget} tokens ran out"),
-                    None,
-                ),
-                StopReason::Eos | StopReason::ImEnd => {
-                    match validate(&res.text, &self.catalogue, req.tools.as_deref()) {
-                        Outcome::Calls(c) => (
-                            "candidate",
-                            String::new(),
-                            Some(Value::Array(
-                                c.into_iter()
-                                    .map(|c| json!({"name": c.name, "arguments": c.arguments}))
-                                    .collect(),
-                            )),
-                        ),
-                        Outcome::NoCall => {
-                            ("no_call", "the model chose no tool".into(), Some(json!([])))
-                        }
-                        Outcome::NoMarker => (
-                            "invalid_output",
-                            "no <tool_call> in the completion".into(),
-                            None,
-                        ),
-                        Outcome::Unterminated => {
-                            ("invalid_output", "unterminated <tool_call>".into(), None)
-                        }
-                        Outcome::Malformed(d) | Outcome::Invalid(d) => ("invalid_output", d, None),
-                        Outcome::Unsupported(d) => ("unsupported", d, None),
-                        Outcome::NeedsClarification(d) => ("needs_clarification", d, None),
-                    }
-                }
-            }
-        };
-
-        let (confidence, confidence_ms) = if self.opts.confidence && status == "candidate" {
+        let mut v = classify(
+            &self.catalogue,
+            &self.opts,
+            &req.query,
+            req.tools.as_deref(),
+            &res.text,
+            res.stop,
+            res.prompt_truncated,
+            budget,
+        );
+        let (confidence, confidence_ms) = if self.opts.confidence && v.status == "candidate" {
             let t = Instant::now();
             let p = self
                 .engine
                 .confidence_for(&req.query, &tools_json, &res.text);
-            (p.map(|p| json!(p)), Some(ms(t.elapsed())))
+            (p, Some(ms(t.elapsed())))
         } else {
             (None, None)
         };
+        v.gate_confidence(self.opts.min_confidence, confidence);
+        let Verdict {
+            status,
+            detail,
+            calls,
+            rejected,
+            grounded,
+            ungrounded: ungrounded_args,
+        } = v;
 
         let mut out = json!({
             "request_id": id,
             "status": status,
             "prompt_truncated": res.prompt_truncated,
             "stop_reason": stop_name(res.stop),
-            "schema_valid": matches!(status, "candidate" | "no_call"),
-            // Not checked here: whether the arguments are grounded in what was said.
-            "grounded": null,
+            "schema_valid": matches!(status, "candidate" | "no_call") || grounded.is_some(),
+            // Whether every argument is something the query states (crate::grounding); null
+            // when not checked. Application policy beyond that is the caller's.
+            "grounded": grounded,
             "confidence_raw": confidence,
             "tokens": {
                 "prompt": res.prompt_tokens,
@@ -398,6 +587,12 @@ impl Service {
         }
         if let Some(c) = calls {
             o.insert("calls".into(), c);
+        }
+        if let Some(r) = rejected {
+            o.insert("rejected_calls".into(), r);
+        }
+        if !ungrounded_args.is_empty() {
+            o.insert("ungrounded".into(), json!(ungrounded_args));
         }
         if self.opts.debug_text {
             o.insert("text".into(), json!(res.text));

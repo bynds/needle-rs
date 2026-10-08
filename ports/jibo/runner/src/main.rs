@@ -35,6 +35,12 @@ options:
   --system TEXT         system message
   --confidence          score candidates with the confidence head (uncalibrated, timed)
   --debug-text          include the raw completion in responses
+  --verify-model        hash the model now instead of trusting the <model>.sha256 sidecar cache
+  --expect-sha256 HEX   refuse to start unless the model hashes to HEX (always recomputed)
+  --grounding MODE      enforce (default): a call whose numbers or free text the query does not
+                        state becomes needs_clarification; strict: enum values must be said
+                        too; report: annotate only; off
+  --min-confidence P    with --confidence: candidates scoring below P become low_confidence
   --max-total-tokens N  prompt + generated, per request (default 512)
   --max-new-tokens N    generated, per request (default 256)
   --min-new-tokens N    refuse a prompt that leaves fewer than this (default 64)
@@ -46,6 +52,8 @@ options:
 run:   --query TEXT [--request-id ID]
 serve: [--socket PATH] [--queue N (default 2)]
 bench: --requests FILE.jsonl [--reps N (default 3)] [--warmup N (default 1)]
+regrade RESPONSES.jsonl --tools CATALOGUE --requests REQUESTS.jsonl [--grounding M] [--min-confidence P]:
+       re-apply the policy to saved --debug-text responses, without the model
 dump-op MODEL --tensor NAME --out DIR [--tokens N]: reference vectors for backend/jibo-cq-bench
        (NAME: embedding, l<N>.q_proj|k_proj|v_proj|gate_proj|out_proj, l<N>.mlp.w1|w2|w3)";
 
@@ -109,6 +117,19 @@ fn parse_args() -> Result<Args, String> {
             "--system" => a.opts.system = Some(val("--system")?),
             "--confidence" => a.opts.confidence = true,
             "--debug-text" => a.opts.debug_text = true,
+            "--verify-model" => a.opts.verify_model = true,
+            "--expect-sha256" => a.opts.expect_sha256 = Some(val(&arg)?),
+            "--grounding" => {
+                a.opts.grounding = needle_jibo::service::Grounding::parse(&val(&arg)?)
+                    .ok_or("--grounding: enforce, strict, report or off")?
+            }
+            "--min-confidence" => {
+                a.opts.min_confidence = Some(
+                    val(&arg)?
+                        .parse()
+                        .map_err(|_| "--min-confidence: not a number")?,
+                )
+            }
             "--max-total-tokens" => a.limits.max_total_tokens = num(val(&arg)?, &arg)?,
             "--max-new-tokens" => a.limits.max_new_tokens = num(val(&arg)?, &arg)?,
             "--min-new-tokens" => a.limits.min_new_tokens = num(val(&arg)?, &arg)?,
@@ -145,6 +166,9 @@ fn parse_args() -> Result<Args, String> {
     a.model = positional.remove(0).into();
     if a.tools.as_os_str().is_empty() && a.cmd != "dump-op" {
         return Err("--tools CATALOGUE is required".into());
+    }
+    if a.opts.min_confidence.is_some() && !a.opts.confidence && a.cmd != "regrade" {
+        return Err("--min-confidence needs --confidence".into());
     }
     if a.gate.thermal.is_some() != a.gate.max_temp_c.is_some() {
         return Err("--thermal and --max-temp-c go together".into());
@@ -354,6 +378,84 @@ fn bench(svc: &Service, path: &std::path::Path, reps: usize, warmup: usize) -> R
     Ok(())
 }
 
+/// Re-apply the current validation, grounding and confidence policy to saved `--debug-text`
+/// responses, without the model. MODEL is the responses file; --requests gives the queries.
+fn regrade(a: &Args) -> Result<(), String> {
+    use needle_jibo::service::{classify, stop_from_name};
+    let cat =
+        std::fs::read_to_string(&a.tools).map_err(|e| format!("{}: {e}", a.tools.display()))?;
+    let catalogue = Catalogue::parse(&cat)?;
+    let reqs = a
+        .requests
+        .as_ref()
+        .ok_or("regrade needs --requests FILE.jsonl")?;
+    let mut by_id = std::collections::HashMap::new();
+    for l in std::fs::read_to_string(reqs)
+        .map_err(|e| e.to_string())?
+        .lines()
+    {
+        if let Ok(Line::Request(r)) = parse_line(l, MAX_LINE) {
+            by_id.insert(r.id.clone(), r);
+        }
+    }
+    let text =
+        std::fs::read_to_string(&a.model).map_err(|e| format!("{}: {e}", a.model.display()))?;
+    let mut out = std::io::stdout().lock();
+    for l in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut v: Value = serde_json::from_str(l).map_err(|e| e.to_string())?;
+        if v.get("summary").is_some() {
+            continue;
+        }
+        let id = v["request_id"].as_str().unwrap_or_default().to_string();
+        let (Some(req), Some(completion), Some(stop)) = (
+            by_id.get(&id),
+            v["text"].as_str().map(str::to_string),
+            v["stop_reason"].as_str().and_then(stop_from_name),
+        ) else {
+            // Refused before generation (truncated, busy, ...): nothing to re-grade.
+            emit(&mut out, &v);
+            continue;
+        };
+        let mut g = classify(
+            &catalogue,
+            &a.opts,
+            &req.query,
+            req.tools.as_deref(),
+            &completion,
+            stop,
+            v["prompt_truncated"].as_bool().unwrap_or(false),
+            v["tokens"]["budget"].as_u64().unwrap_or(0) as usize,
+        );
+        let p = v["confidence_raw"].as_f64().map(|p| p as f32);
+        g.gate_confidence(a.opts.min_confidence, p);
+        let o = v.as_object_mut().ok_or("response is not an object")?;
+        for k in ["detail", "calls", "rejected_calls", "ungrounded"] {
+            o.remove(k);
+        }
+        o.insert("status".into(), json!(g.status));
+        o.insert("grounded".into(), json!(g.grounded));
+        if !g.detail.is_empty() {
+            o.insert("detail".into(), json!(g.detail));
+        }
+        if let Some(c) = g.calls {
+            o.insert("calls".into(), c);
+        }
+        if let Some(r) = g.rejected {
+            o.insert("rejected_calls".into(), r);
+        }
+        if !g.ungrounded.is_empty() {
+            o.insert("ungrounded".into(), json!(g.ungrounded));
+        }
+        o.insert(
+            "regraded".into(),
+            json!({"grounding": format!("{:?}", a.opts.grounding).to_lowercase(),
+                                           "min_confidence": a.opts.min_confidence}),
+        );
+        emit(&mut out, &v);
+    }
+    Ok(())
+}
+
 fn main() {
     let a = match parse_args() {
         Ok(a) => a,
@@ -362,6 +464,13 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if a.cmd == "regrade" {
+        if let Err(e) = regrade(&a) {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if a.cmd == "dump-op" {
         let (Some(t), Some(o)) = (&a.tensor, &a.out) else {
             eprintln!("dump-op needs --tensor NAME --out DIR");

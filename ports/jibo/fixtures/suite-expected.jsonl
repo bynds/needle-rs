@@ -1,0 +1,195 @@
+{"request_id": "dev-000", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "heldout-001", "expected": [{"name": "start_timer", "arguments": {"seconds": 3600}}]}
+{"request_id": "dev-002", "expected": [{"name": "set_volume", "arguments": {"level": 6}}]}
+{"request_id": "heldout-003", "expected": []}
+{"request_id": "dev-004", "expected": "no_call_or_refusal"}
+{"request_id": "heldout-005", "expected": [{"name": "play_animation", "arguments": {"name": "nod"}}]}
+{"request_id": "dev-006", "expected": [{"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "heldout-007", "expected": [{"name": "start_timer", "arguments": {"seconds": 1800}}]}
+{"request_id": "dev-008", "expected": []}
+{"request_id": "heldout-009", "expected": []}
+{"request_id": "dev-010", "expected": [{"name": "play_animation", "arguments": {"name": "spin"}}]}
+{"request_id": "heldout-011", "expected": [{"name": "set_volume", "arguments": {"level": 2}}]}
+{"request_id": "dev-012", "expected": [{"name": "get_weather", "arguments": {"city": "São Paulo"}}]}
+{"request_id": "heldout-013", "expected": "no_call_or_refusal"}
+{"request_id": "dev-014", "expected": [{"name": "get_weather", "arguments": {"city": "São Paulo"}}]}
+{"request_id": "heldout-015", "expected": [{"name": "start_timer", "arguments": {"seconds": 240}}]}
+{"request_id": "dev-016", "expected": []}
+{"request_id": "heldout-017", "expected": []}
+{"request_id": "dev-018", "expected": [{"name": "play_animation", "arguments": {"name": "nod"}}]}
+{"request_id": "heldout-019", "expected": "needs_clarification_or_no_call"}
+{"request_id": "dev-020", "expected": [{"name": "set_alarm", "arguments": {"hour": 7, "minute": 0}}]}
+{"request_id": "heldout-021", "expected": [{"name": "set_volume", "arguments": {"level": 7}}]}
+{"request_id": "dev-022", "expected": "needs_clarification_or_no_call"}
+{"request_id": "heldout-023", "expected": "no_call_or_refusal"}
+{"request_id": "dev-024", "expected": [{"name": "set_volume", "arguments": {"level": 7}}]}
+{"request_id": "heldout-025", "expected": "no_call_or_refusal"}
+{"request_id": "dev-026", "expected": []}
+{"request_id": "heldout-027", "expected": [{"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "dev-028", "expected": [{"name": "cancel_timer", "arguments": {}}]}
+{"request_id": "heldout-029", "expected": [{"name": "start_timer", "arguments": {"seconds": 30}}]}
+{"request_id": "dev-030", "expected": [{"name": "start_timer", "arguments": {"seconds": 900}}]}
+{"request_id": "heldout-031", "expected": [{"name": "start_timer", "arguments": {"seconds": 900}}]}
+{"request_id": "dev-032", "expected": [{"name": "start_timer", "arguments": {"seconds": 45}}]}
+{"request_id": "heldout-033", "expected": [{"name": "start_timer", "arguments": {"seconds": 900}}]}
+{"request_id": "dev-034", "expected": [{"name": "set_volume", "arguments": {"level": 6}}]}
+{"request_id": "heldout-035", "expected": []}
+{"request_id": "dev-036", "expected": [{"name": "start_timer", "arguments": {"seconds": 15}}]}
+{"request_id": "heldout-037", "expected": [{"name": "set_alarm", "arguments": {"hour": 17, "minute": 0}}]}
+{"request_id": "dev-038", "expected": "no_call_or_refusal"}
+{"request_id": "heldout-039", "expected": [{"name": "start_timer", "arguments": {"seconds": 180}}]}
+{"request_id": "dev-040", "expected": [{"name": "get_weather", "arguments": {"city": "Sydney"}}]}
+{"request_id": "heldout-041", "expected": [{"name": "start_timer", "arguments": {"seconds": 5400}}]}
+{"request_id": "dev-042", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "heldout-043", "expected": [{"name": "start_timer", "arguments": {"seconds": 180}}]}
+{"request_id": "dev-044", "expected": "needs_clarification_or_no_call"}
+{"request_id": "heldout-045", "expected": []}
+{"request_id": "dev-046", "expected": [{"name": "start_timer", "arguments": {"seconds": 1200}}]}
+{"request_id": "heldout-047", "expected": [{"name": "play_animation", "arguments": {"name": "wave"}}, {"name": "play_animation", "arguments": {"name": "nod"}}]}
+{"request_id": "dev-048", "expected": [{"name": "play_animation", "arguments": {"name": "spin"}}]}
+{"request_id": "heldout-049", "expected": [{"name": "play_animation", "arguments": {"name": "spin"}}]}
+{"request_id": "dev-050", "expected": [{"name": "set_alarm", "arguments": {"hour": 9, "minute": 0}}]}
+{"request_id": "heldout-051", "expected": []}
+{"request_id": "dev-052", "expected": [{"name": "set_alarm", "arguments": {"hour": 7, "minute": 15}}]}
+{"request_id": "heldout-053", "expected": []}
+{"request_id": "dev-054", "expected": "any"}
+{"request_id": "heldout-055", "expected": [{"name": "start_timer", "arguments": {"seconds": 480}}]}
+{"request_id": "dev-056", "expected": [{"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "heldout-057", "expected": [{"name": "get_weather", "arguments": {"city": "Lagos"}}]}
+{"request_id": "dev-058", "expected": [{"name": "start_timer", "arguments": {"seconds": 360}}]}
+{"request_id": "heldout-059", "expected": [{"name": "set_alarm", "arguments": {"hour": 7, "minute": 30}}]}
+{"request_id": "dev-060", "expected": [{"name": "set_volume", "arguments": {"level": 0}}]}
+{"request_id": "heldout-061", "expected": [{"name": "set_alarm", "arguments": {"hour": 9, "minute": 45}}]}
+{"request_id": "dev-062", "expected": [{"name": "start_timer", "arguments": {"seconds": 240}}]}
+{"request_id": "heldout-063", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "dev-064", "expected": [{"name": "set_alarm", "arguments": {"hour": 5, "minute": 0}}]}
+{"request_id": "heldout-065", "expected": []}
+{"request_id": "dev-066", "expected": [{"name": "get_weather", "arguments": {"city": "Boston"}}]}
+{"request_id": "heldout-067", "expected": [{"name": "start_timer", "arguments": {"seconds": 90}}]}
+{"request_id": "dev-068", "expected": [{"name": "set_alarm", "arguments": {"hour": 9, "minute": 15}}]}
+{"request_id": "heldout-069", "expected": [{"name": "cancel_timer", "arguments": {}}]}
+{"request_id": "dev-070", "expected": [{"name": "set_alarm", "arguments": {"hour": 15, "minute": 0}}]}
+{"request_id": "heldout-071", "expected": []}
+{"request_id": "dev-072", "expected": [{"name": "get_weather", "arguments": {"city": "Berlin"}}]}
+{"request_id": "heldout-073", "expected": [{"name": "set_volume", "arguments": {"level": 0}}, {"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "dev-074", "expected": [{"name": "start_timer", "arguments": {"seconds": 1800}}]}
+{"request_id": "heldout-075", "expected": []}
+{"request_id": "dev-076", "expected": "needs_clarification_or_no_call"}
+{"request_id": "heldout-077", "expected": []}
+{"request_id": "dev-078", "expected": [{"name": "start_timer", "arguments": {"seconds": 2700}}]}
+{"request_id": "heldout-079", "expected": []}
+{"request_id": "dev-080", "expected": [{"name": "set_volume", "arguments": {"level": 8}}]}
+{"request_id": "heldout-081", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "dev-082", "expected": [{"name": "set_volume", "arguments": {"level": 10}}]}
+{"request_id": "heldout-083", "expected": []}
+{"request_id": "dev-084", "expected": [{"name": "set_alarm", "arguments": {"hour": 21, "minute": 30}}]}
+{"request_id": "heldout-085", "expected": [{"name": "start_timer", "arguments": {"seconds": 480}}]}
+{"request_id": "dev-086", "expected": [{"name": "set_alarm", "arguments": {"hour": 12, "minute": 0}}]}
+{"request_id": "heldout-087", "expected": [{"name": "set_volume", "arguments": {"level": 2}}]}
+{"request_id": "dev-088", "expected": [{"name": "get_weather", "arguments": {"city": "Cairo"}}]}
+{"request_id": "heldout-089", "expected": [{"name": "set_alarm", "arguments": {"hour": 16, "minute": 0}}]}
+{"request_id": "dev-090", "expected": [{"name": "set_alarm", "arguments": {"hour": 5, "minute": 15}}]}
+{"request_id": "heldout-091", "expected": [{"name": "set_alarm", "arguments": {"hour": 7, "minute": 0}}]}
+{"request_id": "dev-092", "expected": []}
+{"request_id": "heldout-093", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}, {"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "dev-094", "expected": [{"name": "start_timer", "arguments": {"seconds": 3600}}]}
+{"request_id": "heldout-095", "expected": "no_call_or_refusal"}
+{"request_id": "dev-096", "expected": [{"name": "start_timer", "arguments": {"seconds": 1800}}]}
+{"request_id": "heldout-097", "expected": [{"name": "start_timer", "arguments": {"seconds": 2700}}]}
+{"request_id": "dev-098", "expected": [{"name": "set_alarm", "arguments": {"hour": 5, "minute": 0}}]}
+{"request_id": "heldout-099", "expected": [{"name": "set_alarm", "arguments": {"hour": 7, "minute": 30}}]}
+{"request_id": "dev-100", "expected": [{"name": "set_volume", "arguments": {"level": 10}}]}
+{"request_id": "heldout-101", "expected": []}
+{"request_id": "dev-102", "expected": [{"name": "start_timer", "arguments": {"seconds": 20}}]}
+{"request_id": "heldout-103", "expected": [{"name": "set_volume", "arguments": {"level": 3}}]}
+{"request_id": "dev-104", "expected": [{"name": "start_timer", "arguments": {"seconds": 360}}]}
+{"request_id": "heldout-105", "expected": [{"name": "set_volume", "arguments": {"level": 5}}]}
+{"request_id": "dev-106", "expected": [{"name": "get_weather", "arguments": {"city": "Mumbai"}}]}
+{"request_id": "heldout-107", "expected": []}
+{"request_id": "dev-108", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "heldout-109", "expected": "needs_clarification_or_no_call"}
+{"request_id": "dev-110", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "heldout-111", "expected": "no_call_or_refusal"}
+{"request_id": "dev-112", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "heldout-113", "expected": [{"name": "set_volume", "arguments": {"level": 9}}]}
+{"request_id": "dev-114", "expected": []}
+{"request_id": "heldout-115", "expected": [{"name": "set_volume", "arguments": {"level": 5}}]}
+{"request_id": "dev-116", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "heldout-117", "expected": [{"name": "set_volume", "arguments": {"level": 7}}]}
+{"request_id": "dev-118", "expected": [{"name": "set_alarm", "arguments": {"hour": 6, "minute": 45}}]}
+{"request_id": "heldout-119", "expected": []}
+{"request_id": "dev-120", "expected": []}
+{"request_id": "heldout-121", "expected": "needs_clarification_or_no_call"}
+{"request_id": "dev-122", "expected": "no_call_or_refusal"}
+{"request_id": "heldout-123", "expected": [{"name": "get_weather", "arguments": {"city": "Sydney"}}]}
+{"request_id": "dev-124", "expected": [{"name": "start_timer", "arguments": {"seconds": 1200}}]}
+{"request_id": "heldout-125", "expected": []}
+{"request_id": "dev-126", "expected": [{"name": "set_alarm", "arguments": {"hour": 15, "minute": 30}}]}
+{"request_id": "heldout-127", "expected": "no_call_or_refusal"}
+{"request_id": "dev-128", "expected": [{"name": "start_timer", "arguments": {"seconds": 1200}}]}
+{"request_id": "heldout-129", "expected": [{"name": "play_animation", "arguments": {"name": "nod"}}]}
+{"request_id": "dev-130", "expected": []}
+{"request_id": "heldout-131", "expected": [{"name": "get_weather", "arguments": {"city": "New York"}}]}
+{"request_id": "dev-132", "expected": [{"name": "get_weather", "arguments": {"city": "Cairo"}}]}
+{"request_id": "heldout-133", "expected": [{"name": "start_timer", "arguments": {"seconds": 330}}]}
+{"request_id": "dev-134", "expected": [{"name": "get_weather", "arguments": {"city": "New York"}}]}
+{"request_id": "heldout-135", "expected": [{"name": "get_weather", "arguments": {"city": "Reykjavík"}}]}
+{"request_id": "dev-136", "expected": [{"name": "start_timer", "arguments": {"seconds": 2700}}]}
+{"request_id": "heldout-137", "expected": [{"name": "set_alarm", "arguments": {"hour": 9, "minute": 0}}]}
+{"request_id": "dev-138", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "heldout-139", "expected": [{"name": "set_volume", "arguments": {"level": 7}}]}
+{"request_id": "dev-140", "expected": [{"name": "set_alarm", "arguments": {"hour": 13, "minute": 30}}]}
+{"request_id": "heldout-141", "expected": "no_call_or_refusal"}
+{"request_id": "dev-142", "expected": [{"name": "play_animation", "arguments": {"name": "wave"}}]}
+{"request_id": "heldout-143", "expected": "no_call_or_refusal"}
+{"request_id": "dev-144", "expected": [{"name": "start_timer", "arguments": {"seconds": 360}}]}
+{"request_id": "heldout-145", "expected": [{"name": "start_timer", "arguments": {"seconds": 20}}]}
+{"request_id": "dev-146", "expected": "no_call_or_refusal"}
+{"request_id": "heldout-147", "expected": "needs_clarification_or_no_call"}
+{"request_id": "dev-148", "expected": [{"name": "play_animation", "arguments": {"name": "wave"}}]}
+{"request_id": "heldout-149", "expected": [{"name": "play_animation", "arguments": {"name": "wave"}}]}
+{"request_id": "dev-150", "expected": [{"name": "set_alarm", "arguments": {"hour": 5, "minute": 45}}]}
+{"request_id": "heldout-151", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "dev-152", "expected": "no_call_or_refusal"}
+{"request_id": "heldout-153", "expected": [{"name": "start_timer", "arguments": {"seconds": 7200}}]}
+{"request_id": "dev-154", "expected": [{"name": "start_timer", "arguments": {"seconds": 1500}}]}
+{"request_id": "heldout-155", "expected": [{"name": "set_volume", "arguments": {"level": 2}}]}
+{"request_id": "dev-156", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "heldout-157", "expected": [{"name": "start_timer", "arguments": {"seconds": 480}}]}
+{"request_id": "dev-158", "expected": [{"name": "get_weather", "arguments": {"city": "Boston"}}]}
+{"request_id": "heldout-159", "expected": [{"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "dev-160", "expected": [{"name": "set_volume", "arguments": {"level": 0}}]}
+{"request_id": "heldout-161", "expected": []}
+{"request_id": "dev-162", "expected": []}
+{"request_id": "heldout-163", "expected": [{"name": "start_timer", "arguments": {"seconds": 1800}}]}
+{"request_id": "dev-164", "expected": [{"name": "set_alarm", "arguments": {"hour": 7, "minute": 30}}]}
+{"request_id": "heldout-165", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "dev-166", "expected": [{"name": "set_volume", "arguments": {"level": 10}}]}
+{"request_id": "heldout-167", "expected": "no_call_or_refusal"}
+{"request_id": "dev-168", "expected": []}
+{"request_id": "heldout-169", "expected": [{"name": "set_volume", "arguments": {"level": 9}}]}
+{"request_id": "dev-170", "expected": [{"name": "start_timer", "arguments": {"seconds": 360}}]}
+{"request_id": "heldout-171", "expected": [{"name": "start_timer", "arguments": {"seconds": 135}}]}
+{"request_id": "dev-172", "expected": [{"name": "start_timer", "arguments": {"seconds": 90}}]}
+{"request_id": "heldout-173", "expected": [{"name": "start_timer", "arguments": {"seconds": 10}}]}
+{"request_id": "dev-174", "expected": [{"name": "get_weather", "arguments": {"city": "Lagos"}}]}
+{"request_id": "heldout-175", "expected": [{"name": "start_timer", "arguments": {"seconds": 720}}]}
+{"request_id": "dev-176", "expected": [{"name": "start_timer", "arguments": {"seconds": 15}}]}
+{"request_id": "heldout-177", "expected": "needs_clarification_or_no_call"}
+{"request_id": "dev-178", "expected": [{"name": "start_timer", "arguments": {"seconds": 90}}]}
+{"request_id": "heldout-179", "expected": [{"name": "start_timer", "arguments": {"seconds": 225}}]}
+{"request_id": "dev-180", "expected": [{"name": "start_timer", "arguments": {"seconds": 1800}}]}
+{"request_id": "heldout-181", "expected": []}
+{"request_id": "dev-182", "expected": [{"name": "get_weather", "arguments": {"city": "Sydney"}}]}
+{"request_id": "heldout-183", "expected": [{"name": "start_timer", "arguments": {"seconds": 900}}]}
+{"request_id": "dev-184", "expected": [{"name": "cancel_timer", "arguments": {}}]}
+{"request_id": "heldout-185", "expected": [{"name": "set_alarm", "arguments": {"hour": 17, "minute": 30}}]}
+{"request_id": "dev-186", "expected": [{"name": "set_alarm", "arguments": {"hour": 8, "minute": 0}}]}
+{"request_id": "heldout-187", "expected": [{"name": "set_volume", "arguments": {"level": 4}}]}
+{"request_id": "dev-188", "expected": [{"name": "set_alarm", "arguments": {"hour": 13, "minute": 0}}]}
+{"request_id": "heldout-189", "expected": []}
+{"request_id": "dev-190", "expected": [{"name": "start_timer", "arguments": {"seconds": 450}}]}
+{"request_id": "heldout-191", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "dev-192", "expected": []}
+{"request_id": "heldout-193", "expected": [{"name": "start_timer", "arguments": {"seconds": 120}}]}
+{"request_id": "dev-194", "expected": [{"name": "get_weather", "arguments": {"city": "Lagos"}}]}

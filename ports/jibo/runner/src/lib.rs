@@ -3,6 +3,7 @@
 
 pub mod catalog;
 pub mod dump;
+pub mod grounding;
 pub mod service;
 pub mod sha256;
 pub mod sysinfo;

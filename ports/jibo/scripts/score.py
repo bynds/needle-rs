@@ -43,12 +43,12 @@ def main():
             continue
         responses.setdefault(r.get("request_id"), r)
 
-    rows, exact, safe, scored = [], 0, 0, 0
+    rows, exact, safe, scored, missing = [], 0, 0, 0, 0
+    # Score the requests that have responses; an expectations file may cover several splits.
     for rid, exp in expected.items():
         r = responses.get(rid)
         if r is None:
-            rows.append((rid, "MISSING", "", False, False))
-            scored += 1
+            missing += 1
             continue
         status = r["status"]
         calls = r.get("calls")
@@ -78,8 +78,10 @@ def main():
     for rid, status, calls, ok, sf in rows:
         mark = "-" if ok is None else ("ok " if ok else ("SAFE" if sf else "BAD"))
         print(f"{rid:<{w}}  {mark:<4} {status:<20} {calls if calls != 'null' else ''}")
+    unknown = [k for k in responses if k not in expected]
     print(json.dumps({"label": label, "scored": scored, "exact": exact, "safe": safe,
-                      "unsafe": scored - safe}))
+                      "unsafe": scored - safe, "not_in_responses": missing,
+                      "without_expectation": len(unknown)}))
 
 
 if __name__ == "__main__":
