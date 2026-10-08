@@ -4,6 +4,7 @@
 //!   needle-jibo run   MODEL --tools CATALOGUE --query TEXT [options]
 //!   needle-jibo serve MODEL --tools CATALOGUE [--socket PATH [--queue N]] [options]
 //!   needle-jibo bench MODEL --tools CATALOGUE --requests FILE.jsonl [--reps N] [options]
+//!   needle-jibo dump-op MODEL --tensor NAME --out DIR [--tokens N]
 //!
 //! `serve` reads one JSON request per line on stdin and writes one JSON response per line on
 //! stdout, or, with `--socket`, answers one request per Unix-socket connection (mode 0660; write
@@ -25,6 +26,7 @@ use std::time::{Duration, Instant};
 const MAX_LINE: usize = 16 * 1024;
 
 const USAGE: &str = "usage: needle-jibo info|run|serve|bench MODEL --tools CATALOGUE [options]
+       needle-jibo dump-op MODEL --tensor NAME --out DIR [--tokens N]
 
 options:
   --layers N            ladder rung (2..num_layers); default: the container's full depth
@@ -43,7 +45,9 @@ options:
   --max-temp-c C        ... and answer busy while it reads above C
 run:   --query TEXT [--request-id ID]
 serve: [--socket PATH] [--queue N (default 2)]
-bench: --requests FILE.jsonl [--reps N (default 3)] [--warmup N (default 1)]";
+bench: --requests FILE.jsonl [--reps N (default 3)] [--warmup N (default 1)]
+dump-op MODEL --tensor NAME --out DIR [--tokens N]: reference vectors for backend/jibo-cq-bench
+       (NAME: embedding, l<N>.q_proj|k_proj|v_proj|gate_proj|out_proj, l<N>.mlp.w1|w2|w3)";
 
 struct Args {
     cmd: String,
@@ -60,6 +64,9 @@ struct Args {
     reps: usize,
     warmup: usize,
     gate: sysinfo::Gate,
+    tensor: Option<String>,
+    out: Option<PathBuf>,
+    tokens: usize,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -83,6 +90,9 @@ fn parse_args() -> Result<Args, String> {
         reps: 3,
         warmup: 1,
         gate: sysinfo::Gate::default(),
+        tensor: None,
+        out: None,
+        tokens: 1,
     };
     let mut positional = Vec::new();
     while let Some(arg) = it.next() {
@@ -122,6 +132,9 @@ fn parse_args() -> Result<Args, String> {
             "--requests" => a.requests = Some(val(&arg)?.into()),
             "--reps" => a.reps = num(val(&arg)?, &arg)?,
             "--warmup" => a.warmup = num(val(&arg)?, &arg)?,
+            "--tensor" => a.tensor = Some(val(&arg)?),
+            "--out" => a.out = Some(val(&arg)?.into()),
+            "--tokens" => a.tokens = num(val(&arg)?, &arg)?,
             s if s.starts_with("--") => return Err(format!("unknown option {s}\n{USAGE}")),
             _ => positional.push(arg),
         }
@@ -130,7 +143,7 @@ fn parse_args() -> Result<Args, String> {
         return Err(USAGE.into());
     }
     a.model = positional.remove(0).into();
-    if a.tools.as_os_str().is_empty() {
+    if a.tools.as_os_str().is_empty() && a.cmd != "dump-op" {
         return Err("--tools CATALOGUE is required".into());
     }
     if a.gate.thermal.is_some() != a.gate.max_temp_c.is_some() {
@@ -349,6 +362,20 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if a.cmd == "dump-op" {
+        let (Some(t), Some(o)) = (&a.tensor, &a.out) else {
+            eprintln!("dump-op needs --tensor NAME --out DIR");
+            std::process::exit(2);
+        };
+        match needle_jibo::dump::dump(&a.model, t, a.tokens, o) {
+            Ok(text) => print!("{text}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let cat_text = match std::fs::read_to_string(&a.tools) {
         Ok(t) => t,
         Err(e) => {

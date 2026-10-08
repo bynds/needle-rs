@@ -1,0 +1,14 @@
+{
+  "label": "armv7 cross-build",
+  "source_commit": "9a8adef2a3d1d156e5daa2cd73f6480befcc3b55",
+  "source_dirty": true,
+  "cargo_lock_sha256": "c4b7930eaf2237aeb87320b1b008847144a5976d3b15469a63921f952e404a26",
+  "rustc": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+  "target": "armv7-unknown-linux-gnueabihf",
+  "target_rustflags": "",
+  "linker": "stand-in sysroot g/glibc/libc6_2.21-0ubuntu4.3_armhf.deb g/glibc/libc6-dev_2.21-0ubuntu4.3_armhf.deb l/linux/linux-libc-dev_3.19.0-15.15_armhf.deb g/gcc-4.9/libgcc1_4.9.1-16ubuntu6_armhf.deb ",
+  "cc": "arm-linux-gnueabihf-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "needle_jibo_sha256": "edb63505b43b6992f70ee04567d80b0c19ab1fe618fe82a00f8a7ba87f989d7b",
+  "needle_rs_sha256": "9a11e9916eba363081ef9a0ae0c88d790f27aae013fbc09aaab93cde5e02c68a",
+  "jibo_cq_bench_sha256": "beb89691294c90dc536d7e2981a5341f127f9539096cf485d569f3dd8f816dca"
+}

@@ -1,0 +1,42 @@
+{
+  "kind": "synthetic (seeded random weights; not a model)",
+  "seed": 0,
+  "file": "synthetic-needle3.cact",
+  "bytes": 35335245,
+  "sha256": "c4f19e5cf8031f9caf680da54facd7b12daeb9a6b2246bc5439e3d289238a7c8",
+  "tensors": 581,
+  "tokenizer_pieces": 8192,
+  "tokenizer_model_sha256": "65f6090d848f7575ce6987c3493cf4cb035bc1291b04e75f672a34a2807e529a",
+  "scheme": "embedding=4,mhc=4,default=2,group=128",
+  "geometry": {
+    "d_model": 768,
+    "num_layers": 20,
+    "num_heads": 12,
+    "num_kv_heads": 2,
+    "qk_head_dim": 48,
+    "v_head_dim": 64,
+    "vocab": 8192,
+    "max_seq_len": 8192,
+    "kv_window": 256,
+    "engram_sites": [
+      3,
+      7,
+      11,
+      15,
+      19
+    ],
+    "global_layers": [
+      4,
+      9,
+      14,
+      19
+    ]
+  },
+  "upstream": {
+    "repo": "cactus-compute/needle",
+    "commit": "af2654dffa4987f7e2cbbacdf59c2f854fd18302",
+    "jax": "0.11.2",
+    "numpy": "2.5.3",
+    "sentencepiece": "0.2.2"
+  }
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-jibo.sh OUT_DIR: cross-build needle-jibo (and the upstream CLI as a reference) for Jibo,
+# build-jibo.sh OUT_DIR: cross-build needle-jibo, the upstream CLI (a reference) and jibo-cq-bench,
 # check the ABI, and write a build manifest. Nothing here runs on, or copies to, the robot.
 #
 #   JIBO_CC=<the owner's jibo-armcc wrapper>   the intended linker: Linaro GCC 4.8.4 with the
@@ -49,9 +49,14 @@ for pkg in needle-jibo needle-rs-cli; do
 done
 cp "target/$T/release/needle-jibo" "target/$T/release/needle-rs" "$OUT/"
 
+# The C operation benchmark (scalar, NEON, desktop-GL compute). C99 for Linaro GCC 4.8.4; libGL
+# and libX11 are opened with dlopen, so it links libc, libm and libdl only.
+"$LINKER" -O2 -std=c99 -march=armv7-a -mfpu=neon -mfloat-abi=hard -static-libgcc \
+  -o "$OUT/jibo-cq-bench" "$HERE/backend/jibo-cq-bench.c" -ldl -lm
+
 READELF=${READELF:-arm-linux-gnueabihf-readelf}
 "$READELF" -h -A -l -d --version-info "$OUT/needle-jibo" > "$OUT/needle-jibo.readelf.txt"
-"$HERE/scripts/check-jibo-abi.sh" "$OUT/needle-jibo" "$OUT/needle-rs" | tee "$OUT/abi-check.txt"
+"$HERE/scripts/check-jibo-abi.sh" "$OUT/needle-jibo" "$OUT/needle-rs" "$OUT/jibo-cq-bench" | tee "$OUT/abi-check.txt"
 
 {
   echo "{"
@@ -65,7 +70,8 @@ READELF=${READELF:-arm-linux-gnueabihf-readelf}
   echo "  \"linker\": \"$route\","
   echo "  \"cc\": \"$(${JIBO_CC:-arm-linux-gnueabihf-gcc} --version | head -1)\","
   echo "  \"needle_jibo_sha256\": \"$(sha256sum "$OUT/needle-jibo" | cut -d' ' -f1)\","
-  echo "  \"needle_rs_sha256\": \"$(sha256sum "$OUT/needle-rs" | cut -d' ' -f1)\""
+  echo "  \"needle_rs_sha256\": \"$(sha256sum "$OUT/needle-rs" | cut -d' ' -f1)\","
+  echo "  \"jibo_cq_bench_sha256\": \"$(sha256sum "$OUT/jibo-cq-bench" | cut -d' ' -f1)\""
   echo "}"
 } > "$OUT/build-manifest.json"
 cargo "+$TC" tree --locked --target "$T" -p needle-jibo -e features > "$OUT/needle-jibo.feature-tree.txt"

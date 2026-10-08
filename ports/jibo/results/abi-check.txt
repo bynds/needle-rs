@@ -1,0 +1,3 @@
+ok   /tmp/claude-0/out-armv7-final/needle-jibo  NEEDED: libgcc_s.so.1 librt.so.1 libpthread.so.0 libm.so.6 libdl.so.2 libc.so.6 | versions: GCC_3.0 GCC_3.5 GCC_4.3.0 GLIBC_2.4 GLIBC_2.10 GLIBC_2.12 GLIBC_2.16 GLIBC_2.18 
+ok   /tmp/claude-0/out-armv7-final/needle-rs  NEEDED: libgcc_s.so.1 librt.so.1 libpthread.so.0 libm.so.6 libdl.so.2 libc.so.6 | versions: GCC_3.0 GCC_3.5 GCC_4.3.0 GLIBC_2.4 GLIBC_2.12 GLIBC_2.16 GLIBC_2.18 
+ok   /tmp/claude-0/out-armv7-final/jibo-cq-bench  NEEDED: libdl.so.2 libm.so.6 libc.so.6 ld-linux-armhf.so.3 | versions: GLIBC_2.4 GLIBC_2.7 GLIBC_2.17 

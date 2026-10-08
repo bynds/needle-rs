@@ -1,0 +1,2 @@
+4de50494fd60f417b24c37e4d972f95d128f8a0f
+4de50494fd60f417b24c37e4d972f95d128f8a0f docs: HF card gains --layers, and matches what is published again

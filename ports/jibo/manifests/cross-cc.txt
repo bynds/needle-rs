@@ -1,0 +1,2 @@
+arm-linux-gnueabihf-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+qemu-arm version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)

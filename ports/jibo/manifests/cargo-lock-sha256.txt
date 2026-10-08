@@ -1,0 +1,2 @@
+c4b7930eaf2237aeb87320b1b008847144a5976d3b15469a63921f952e404a26  Cargo.lock
+e4c0beda3e990690caaa0820408a0c4c5a024095fe35718bb644321a1fc1f755  Cargo.lock (upstream 4de5049, before the needle-jibo entry)

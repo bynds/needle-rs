@@ -1,0 +1,50 @@
+     Running unittests src/lib.rs (target/armv7-unknown-linux-gnueabihf/release/deps/needle_core-f8a64f4c043f4d1e)
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+     Running tests/parity_tests.rs (target/armv7-unknown-linux-gnueabihf/release/deps/parity_tests-b652708f06b87dec)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running tests/v3_component_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v3_component_parity-41f5fc768c2a5b9c)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+     Running tests/v3_kv_quant_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v3_kv_quant_parity-722507d2f33bb6ca)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running unittests src/lib.rs (target/armv7-unknown-linux-gnueabihf/release/deps/needle_infer-8cad054f19f8edb6)
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+     Running tests/cact_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/cact_parity-02278e946fbd381b)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/cact_v3_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/cact_v3_parity-008f603535d4586b)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests/constrained_unit.rs (target/armv7-unknown-linux-gnueabihf/release/deps/constrained_unit-2a0623c1d4cd2866)
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+     Running tests/e2e_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/e2e_parity-a20087d3b0555a64)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/functional.rs (target/armv7-unknown-linux-gnueabihf/release/deps/functional-93554524ce4190df)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/real_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/real_parity-f5d6b4d170f0ec69)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/tokenizer_v2_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/tokenizer_v2_parity-fefa470cbeffb753)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/tokenizer_v3_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/tokenizer_v3_parity-0334c2c1d45b2457)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+     Running tests/v2_batch_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v2_batch_parity-852122462400f9ca)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/v2_constrained.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v2_constrained-8bea052ad29906af)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/v2_e2e_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v2_e2e_parity-22a6e85137237e65)
+test result_is_independent_of_prefill_chunk ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/v2_forward_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v2_forward_parity-fed64c58348752aa)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/v2_heads_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v2_heads_parity-28c4250c4efe308a)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/v3_container_offline.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v3_container_offline-a4252fb9c3fe5b1a)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/v3_e2e.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v3_e2e-d69b45b9d6339b6a)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 428.30s
+     Running tests/v3_forward_parity.rs (target/armv7-unknown-linux-gnueabihf/release/deps/v3_forward_parity-7b47bd8d98541e07)
+v3 cells: 57 x 21 x 768, max abs 1.600e1 vs RMS 95835.750 = 1.670e-4 relative
+test cells_and_confidence_match_the_reference ... FAILED
+v3 forward: 57 positions, max abs deviation 1.984e-4 against logit RMS 28.945 = 6.853e-6 relative, 0 argmax mismatches, 31.225003756s
+v3 decode: 57 steps, max abs deviation 0.000e0 against RMS 28.945 = 0.000e0 relative, 0 argmax mismatches, 32.627212748s (572.4 ms/token), cache 1257 KB
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 91.26s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 85.90s

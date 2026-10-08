@@ -1,0 +1,15 @@
+Runtime (patched here):     Geekgineer/needle-rs @ 4de50494fd60f417b24c37e4d972f95d128f8a0f (MIT), v0.3.1
+Model:                      Cactus-Compute/needle3 @ 2ae11323dc000f5e70c49f7403efa6af12ba9e67, needle3.cact (Apache-2.0)
+Model config (published):   engine_version 3.1.0, kv_cache_bits 8, kv_window 256, activation_bits 8,
+                            scheme embedding=4,mhc=4,default=2, group 128 (config.json, sha256 in official-armv7-sha256.txt)
+Publisher reference (JAX):  cactus-compute/needle @ dd857748ef4d8a91028fce9ea01bf793cf2c9caa ("Needle 3 Live"),
+                            the commit tools/cact_params_v3.py pins; run as a separate worktree, unmodified.
+                            Oracle tokenizer (fetched by upstream get_tokenizer from the model repo):
+                            tokenizer.model sha256 97dfd5666620b19875deba9e55953d312364e7763bd08bee428b94f1b9491b25
+Publisher checkout on branch: bynds/needle @ af2654dffa4987f7e2cbbacdf59c2f854fd18302 (used for the synthetic
+                            container's exporter only; not modified)
+Official native binary:     Cactus-Compute/needle3 linux-armv7/needle at the model revision above. Black-box only:
+                            needs GLIBC_2.34, so it cannot load on Jibo (glibc 2.21); run here under qemu-arm with
+                            the cross toolchain's modern armhf glibc.
+Infrastructure reused:      bynds/strands-decider @ 29e78ff (branch claude/inference-engine-jibo-port-rucz8e,
+                            Apache-2.0): check-jibo-abi.sh, robot-run.sh structure, GL context setup.

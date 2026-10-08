@@ -2,6 +2,7 @@
 //! kept separate from `main.rs` so it can be tested on the host and under ARMv7 emulation.
 
 pub mod catalog;
+pub mod dump;
 pub mod service;
 pub mod sha256;
 pub mod sysinfo;

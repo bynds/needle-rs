@@ -1,0 +1,9 @@
+needle-rs runtime and this port's Rust/C code:  MIT (LICENSE at the repository root).
+Needle 3 weights (needle3.cact):                 Apache-2.0, Cactus Compute. Not redistributed here; fetched by
+                                                 revision and checked by sha256. Do not relabel as MIT.
+Adapted from bynds/strands-decider (Apache-2.0): scripts/check-jibo-abi.sh, scripts/robot-run.sh (structure),
+                                                 backend/jibo-cq-bench.c (GLX context setup). Each file names its
+                                                 source and commit.
+tools/make_synthetic_v3.py:                      calls upstream needle's exporter (Apache-2.0) at run time; copies
+                                                 none of its code.
+No GPL (Oido) code is used.

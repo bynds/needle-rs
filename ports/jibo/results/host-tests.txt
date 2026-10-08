@@ -1,0 +1,78 @@
+     Running unittests src/lib.rs (target/release/deps/needle_c-071b2097f1426804)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/ffi_smoke.rs (target/release/deps/ffi_smoke-a493c6012134b490)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v2_ffi_smoke.rs (target/release/deps/v2_ffi_smoke-90c7ef0d2ceaafde)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v3_ffi_smoke.rs (target/release/deps/v3_ffi_smoke-21e4c0be5eb38cd4)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.30s
+     Running unittests src/lib.rs (target/release/deps/needle_core-a710f02507b87d59)
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/parity_tests.rs (target/release/deps/parity_tests-2906924524ba2ea5)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/v3_component_parity.rs (target/release/deps/v3_component_parity-2c5c333b50bdf78c)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/v3_kv_quant_parity.rs (target/release/deps/v3_kv_quant_parity-c7ac342f24c69f25)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/release/deps/needle_infer-b417bdac78e12694)
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/cact_parity.rs (target/release/deps/cact_parity-67eae77176f5399a)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cact_v3_parity.rs (target/release/deps/cact_v3_parity-38445af35270a5cd)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/constrained_unit.rs (target/release/deps/constrained_unit-dbc60aab2cc5f467)
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/e2e_parity.rs (target/release/deps/e2e_parity-960539a9ff64d328)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/functional.rs (target/release/deps/functional-2f090b17c21b83ce)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/real_parity.rs (target/release/deps/real_parity-51be2adb799a53e4)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tokenizer_v2_parity.rs (target/release/deps/tokenizer_v2_parity-a6ccafd820939c6c)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tokenizer_v3_parity.rs (target/release/deps/tokenizer_v3_parity-d568a6fb8d1f703d)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/v2_batch_parity.rs (target/release/deps/v2_batch_parity-9fdeb97e18bce6a1)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v2_constrained.rs (target/release/deps/v2_constrained-1cb2786b51cd3dd1)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v2_e2e_parity.rs (target/release/deps/v2_e2e_parity-7cd0903974f6a9bf)
+test result_is_independent_of_prefill_chunk ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v2_forward_parity.rs (target/release/deps/v2_forward_parity-e4c86c1016c7cece)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v2_heads_parity.rs (target/release/deps/v2_heads_parity-9ce02e70203ae0cf)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v3_container_offline.rs (target/release/deps/v3_container_offline-3485f1d416d956ed)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v3_e2e.rs (target/release/deps/v3_e2e-985886bd8fa82894)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.29s
+     Running tests/v3_forward_parity.rs (target/release/deps/v3_forward_parity-70bb10edb3521265)
+test cells_and_confidence_match_the_reference ... FAILED
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.07s
+     Running tests/v3_kv_int8.rs (target/release/deps/v3_kv_int8-56a21b55b351ab27)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.80s
+     Running tests/v3_ladder_parity.rs (target/release/deps/v3_ladder_parity-760e8eeaa2f25b46)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+     Running tests/v3_ladder_slice.rs (target/release/deps/v3_ladder_slice-54679f6225a47b24)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.42s
+     Running tests/v3_perf_probe.rs (target/release/deps/v3_perf_probe-61c64e9e92662737)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+     Running tests/v3_rung_containers.rs (target/release/deps/v3_rung_containers-e7ef604c43a00af4)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v3_rung_e2e.rs (target/release/deps/v3_rung_e2e-f2934789c8b40312)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/v3_statelessness.rs (target/release/deps/v3_statelessness-66deb50e44e46b70)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.05s
+     Running unittests src/lib.rs (target/release/deps/needle_jibo-baefc7b62a3260b3)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/main.rs (target/release/deps/needle_jibo-2a7efbcd095e074c)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/container_robustness.rs (target/release/deps/container_robustness-581adcfc41408cdf)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.50s
+     Running unittests src/main.rs (target/release/deps/needle_rs-a20c1bb526c0849a)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

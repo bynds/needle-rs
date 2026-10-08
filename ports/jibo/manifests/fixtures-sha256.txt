@@ -1,0 +1,5 @@
+67c27b56b815a99fb6358962801dd32ae5b00337d533c0de90567e74503322f7  ports/jibo/fixtures/expected.jsonl
+e4bcf9eae5b46911e6d112ae0264107d50000a4ca4c9f6a3bd77ee6fecd9c36a  ports/jibo/fixtures/query.txt
+3f4cf14d31edb592a56912f953b6dac5044d54dbde73736f893da3114cca34db  ports/jibo/fixtures/requests.jsonl
+33dc4738e1941651c31fffca94a42e7f41fbc53260fe0aa318b574cb922a5c64  ports/jibo/fixtures/tools-extended.json
+db9b8c2fcfe7cdc3a51fbc92dd7f81705d77cb15f42cb1c0b13d1e5c8adbb053  ports/jibo/fixtures/tools.json

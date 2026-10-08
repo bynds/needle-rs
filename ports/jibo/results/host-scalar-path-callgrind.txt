@@ -1,0 +1,60 @@
+--------------------------------------------------------------------------------
+Profile data file 'cg-scalar.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 4587243020
+Trigger: Program termination
+Profiled target:  /tmp/claude-0/target-prof-scalar/release/needle-jibo run /home/user/needle-rs/weights/needle3.cact --tools /home/user/needle-rs/ports/jibo/fixtures/tools.json --query Set a timer for seven and a half minutes. (PID 14348, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       99
+Include dirs:     
+User annotated:   
+Auto-annotation:  on
+
+--------------------------------------------------------------------------------
+Ir                      
+--------------------------------------------------------------------------------
+31,339,847,997 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                       file:function
+--------------------------------------------------------------------------------
+31,339,847,997 (100.0%)  ???:0x000000000001f540 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+31,339,497,444 (100.0%)  ???:(below main) [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+31,339,497,432 (100.0%)  ./csu/../csu/libc-start.c:__libc_start_main@@GLIBC_2.34 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+31,339,497,246 (100.0%)  ./csu/../sysdeps/nptl/libc_start_call_main.h:(below main) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+31,339,495,193 (100.0%)  ???:main [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+31,339,381,189 (100.0%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/std/src/sys/backtrace.rs:std::sys::backtrace::__rust_begin_short_backtrace [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+31,339,381,186 (100.0%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/ops/function.rs:std::sys::backtrace::__rust_begin_short_backtrace
+31,339,381,185 (100.0%)  /tmp/claude-0/prof-src/ports/jibo/runner/src/main.rs:needle_jibo::main [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+28,978,982,208 (92.47%)  /tmp/claude-0/prof-src/ports/jibo/runner/src/service.rs:needle_jibo::service::Service::handle [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+28,976,832,130 (92.46%)  /tmp/claude-0/prof-src/crates/needle-infer/src/v3_engine.rs:needle_jibo::service::Service::handle
+20,483,646,937 (65.36%)  /tmp/claude-0/prof-src/crates/needle-core/src/v3/model.rs:needle_core::v3::model::V3Model::prefill [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+20,483,613,410 (65.36%)  /tmp/claude-0/prof-src/crates/needle-core/src/v3/model.rs:needle_core::v3::model::V3Model::forward_impl_pooled [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+11,544,137,636 (36.84%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::cq::CqWeight::matmul_rows_prepared [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 9,407,554,768 (30.02%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::cq::CqWeight::matvec_rows_prepared [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 8,462,231,416 (27.00%)  /tmp/claude-0/prof-src/crates/needle-core/src/v3/model.rs:needle_core::v3::model::V3Model::decode_step [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 5,371,032,089 (17.14%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::cq::CqWeight::matvec [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 2,868,018,201 ( 9.15%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::cq::CqWeight::prepare_input [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 2,824,354,929 ( 9.01%)  /tmp/claude-0/prof-src/crates/needle-core/src/hadamard.rs:needle_core::hadamard::fwht_normalized [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 2,389,245,453 ( 7.62%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::v3::model::V3Model::forward_impl_pooled
+ 2,356,890,896 ( 7.52%)  /tmp/claude-0/prof-src/ports/jibo/runner/src/service.rs:needle_jibo::service::Service::load [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 2,286,312,439 ( 7.30%)  /tmp/claude-0/prof-src/ports/jibo/runner/src/sha256.rs:needle_jibo::service::Service::load
+ 2,284,103,892 ( 7.29%)  /tmp/claude-0/prof-src/ports/jibo/runner/src/sha256.rs:needle_jibo::sha256::compress [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 2,027,363,787 ( 6.47%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::cq::CqWeight::decode_group [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 1,998,776,304 ( 6.38%)  /tmp/claude-0/prof-src/crates/needle-core/src/v3/kernels.rs:needle_core::v3::kernels::hadamard_mlp [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 1,601,893,874 ( 5.11%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/slice/index.rs:needle_core::cq::CqWeight::matmul_rows_prepared
+ 1,492,068,354 ( 4.76%)  /tmp/claude-0/prof-src/crates/needle-core/src/v3/kernels.rs:needle_core::v3::kernels::kron_apply [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+ 1,284,886,292 ( 4.10%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/cmp.rs:needle_core::cq::CqWeight::matmul_rows_prepared
+ 1,063,146,808 ( 3.39%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/slice/index.rs:needle_core::cq::CqWeight::matvec_rows_prepared
+ 1,062,271,184 ( 3.39%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/num/uint_macros.rs:needle_jibo::sha256::compress
+   961,759,904 ( 3.07%)  /tmp/claude-0/prof-src/crates/needle-core/src/cq.rs:needle_core::v3::model::V3Model::decode_step
+   772,231,179 ( 2.46%)  /tmp/claude-0/prof-src/crates/needle-core/src/v3/mhc.rs:needle_core::v3::mhc::scatter_up [/tmp/claude-0/target-prof-scalar/release/needle-jibo]
+   747,242,496 ( 2.38%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/slice/iter/macros.rs:needle_core::cq::CqWeight::matmul_rows_prepared
+   670,475,520 ( 2.14%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/iter/range.rs:needle_core::cq::CqWeight::matmul_rows_prepared
+   460,048,384 ( 1.47%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/slice/iter/macros.rs:needle_core::cq::CqWeight::matvec_rows_prepared
+   403,111,200 ( 1.29%)  /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library/core/src/iter/range.rs:needle_core::cq::CqWeight::decode_group
