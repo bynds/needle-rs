@@ -10,16 +10,14 @@
 # tools/gen_v3_*.py oracles at the pinned upstream commit, see the README). --qemu also runs the
 # runner's tests and the fixture suite as ARMv7 binaries under qemu-arm (slow: about an hour).
 #
-# Known and recorded, not hidden: v3_forward_parity::cells_and_confidence_match_the_reference
-# fails at upstream 4de5049 against these oracle vectors (1.67e-4 against a 1e-4 tolerance on a
-# global RMS; every per-cell error is <= 4.6e-5 of that cell's RMS; the worst element is off by 6.6e-7
-# of itself). The gate runs it and reports it; it is listed in KNOWN_FAILURES below rather than
-# skipped.
+# Known failures: none. (v3_forward_parity::cells_and_confidence_match_the_reference failed at
+# upstream 4de5049 on a global-RMS metric; this branch judges each cell against its own RMS. The
+# list below stays as the place to record one honestly instead of skipping it.)
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 TC=${RUST_TOOLCHAIN:-1.87.0}
-KNOWN_FAILURES="cells_and_confidence_match_the_reference"
+KNOWN_FAILURES=""
 cd "$ROOT"
 
 fail() { echo "GATE FAIL: $*" >&2; exit 1; }

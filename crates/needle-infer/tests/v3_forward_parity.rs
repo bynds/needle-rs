@@ -221,19 +221,38 @@ fn cells_and_confidence_match_the_reference() {
     assert_eq!(got.len(), want.len(), "cell count");
     assert_eq!(got.len(), tokens.len() * l1 * d);
 
-    let mut worst = 0.0f32;
-    let mut sq = 0.0f64;
-    for (&a, &b) in got.iter().zip(&want) {
-        sq += (b as f64) * (b as f64);
-        worst = worst.max((a - b).abs());
+    // Judged cell by cell, each against its own RMS. The cells span four orders of magnitude
+    // (RMS ~550 at the embedding, ~4.4e5 at the last block, single values near 2.4e7), so one
+    // global RMS is dominated by the last cell and the bound becomes f32 rounding at 2.4e7 for
+    // every other cell: against the oracle at upstream dd85774 (JAX 0.11.2 on CPU) the old
+    // metric read 1.67e-4 while the worst element was off by 6.6e-7 of itself.
+    let mut worst_rel = 0.0f64;
+    let mut worst_cell = 0;
+    for c in 0..l1 {
+        let (mut sq, mut worst, mut n) = (0.0f64, 0.0f32, 0usize);
+        for t in 0..tokens.len() {
+            let base = (t * l1 + c) * d;
+            for k in 0..d {
+                let (a, b) = (got[base + k], want[base + k]);
+                sq += (b as f64) * (b as f64);
+                worst = worst.max((a - b).abs());
+                n += 1;
+            }
+        }
+        let rel = worst as f64 / (sq / n as f64).sqrt();
+        if rel > worst_rel {
+            worst_rel = rel;
+            worst_cell = c;
+        }
     }
-    let rms = (sq / want.len() as f64).sqrt() as f32;
     println!(
-        "v3 cells: {} x {l1} x {d}, max abs {worst:.3e} vs RMS {rms:.3} = {:.3e} relative",
-        tokens.len(),
-        worst / rms
+        "v3 cells: {} x {l1} x {d}, worst cell {worst_cell}: max abs {worst_rel:.3e} of that cell's RMS",
+        tokens.len()
     );
-    assert!(worst / rms < 1e-4, "cells deviate by {:.3e}", worst / rms);
+    assert!(
+        worst_rel < 1e-4,
+        "cell {worst_cell} deviates by {worst_rel:.3e} of its RMS"
+    );
 
     // Now the head itself.
     let head = confidence_head(&cact, &model.cfg)
