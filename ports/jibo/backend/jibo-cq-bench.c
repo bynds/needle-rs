@@ -6,7 +6,9 @@
  *
  * OPDIR comes from `needle-jibo dump-op MODEL --tensor NAME --tokens T --out OPDIR`: a CQ
  * projection (packed indices, FP16 group norms, codebook levels, prepared activations, expected
- * W.x) or one learned Kronecker MLP stage (factors a and b, inputs, expected a^T.Z.b).
+ * W.x), one learned Kronecker MLP stage (factors a and b, inputs, expected a^T.Z.b), or causal
+ * grouped-query attention over a sequence (queries, keys, values, expected output; `ref` and
+ * `gl` only, and --rows-per-dispatch counts query positions).
  *
  * Every backend's result is compared with the expected output: max absolute error, error relative
  * to the output RMS, cosine, and how many rows differ at all. `ref` follows the Rust kernel's
@@ -640,6 +642,143 @@ static int gl_kron(const kron_op *p, int reps, float *out, gl_times *tm, char *e
   return 0;
 }
 
+/* ---- attention: causal grouped-query, optional sliding window ----------------------- */
+typedef struct {
+  int seq, heads, kv_heads, qk, vd, window;
+  const float *q, *k, *v, *o_want;
+} attn_op;
+
+/* The engine's attend(): per (t, h) a two-pass softmax over positions lo..=t, in its order. */
+static void attn_ref(const attn_op *p, float *o) {
+  int rep = p->heads / p->kv_heads;
+  float scale = 1.0f / sqrtf((float)p->qk);
+  float *scores = malloc(sizeof(float) * (size_t)p->seq);
+  for (int t = 0; t < p->seq; t++) {
+    int lo = (p->window > 0 && t + 1 > p->window) ? t + 1 - p->window : 0;
+    for (int h = 0; h < p->heads; h++) {
+      int kvh = h / rep;
+      const float *qv = p->q + ((long)t * p->heads + h) * p->qk;
+      float mx = -INFINITY;
+      for (int n = lo; n <= t; n++) {
+        const float *kv = p->k + ((long)n * p->kv_heads + kvh) * p->qk;
+        float a = 0.0f;
+        for (int i = 0; i < p->qk; i++) a += qv[i] * kv[i];
+        scores[n] = a * scale;
+        if (scores[n] > mx) mx = scores[n];
+      }
+      float sum = 0.0f;
+      for (int n = lo; n <= t; n++) { scores[n] = expf(scores[n] - mx); sum += scores[n]; }
+      float inv = 1.0f / sum;
+      float *out = o + ((long)t * p->heads + h) * p->vd;
+      for (int i = 0; i < p->vd; i++) out[i] = 0.0f;
+      for (int n = lo; n <= t; n++) {
+        float w = scores[n] * inv;
+        const float *vv = p->v + ((long)n * p->kv_heads + kvh) * p->vd;
+        for (int i = 0; i < p->vd; i++) out[i] += w * vv[i];
+      }
+    }
+  }
+  free(scores);
+}
+
+/* One invocation per (position, head), an online softmax so the score row needs no buffer of
+ * sequence length: a different summation order from the engine, so judged by tolerance. */
+static const char *ATTN_SHADER =
+    "#version 430\n"
+    "layout(local_size_x = 64) in;\n"
+    "layout(std430, binding = 0) readonly buffer Q { float q[]; };\n"
+    "layout(std430, binding = 1) readonly buffer K { float k[]; };\n"
+    "layout(std430, binding = 2) readonly buffer V { float v[]; };\n"
+    "layout(std430, binding = 3) writeonly buffer O { float o[]; };\n"
+    "uniform int u_seq, u_window, u_t0, u_nt;\n"
+    "#define H %d\n#define KVH %d\n#define QK %d\n#define VD %d\n"
+    "void main() {\n"
+    "  int id = int(gl_GlobalInvocationID.x);\n"
+    "  if (id >= u_nt * H) return;\n"
+    "  int t = u_t0 + id / H, h = id %% H, kvh = h / (H / KVH);\n"
+    "  float scale = 1.0 / sqrt(float(QK));\n"
+    "  int lo = (u_window > 0 && t + 1 > u_window) ? t + 1 - u_window : 0;\n"
+    "  float m = -3.0e38, l = 0.0;\n"
+    "  float acc[VD];\n"
+    "  for (int i = 0; i < VD; i++) acc[i] = 0.0;\n"
+    "  int qo = (t * H + h) * QK;\n"
+    "  for (int n = lo; n <= t; n++) {\n"
+    "    int ko = (n * KVH + kvh) * QK;\n"
+    "    float s = 0.0;\n"
+    "    for (int i = 0; i < QK; i++) s += q[qo + i] * k[ko + i];\n"
+    "    s *= scale;\n"
+    "    float mn = max(m, s), c = exp(m - mn), e = exp(s - mn);\n"
+    "    l = l * c + e;\n"
+    "    int vo = (n * KVH + kvh) * VD;\n"
+    "    for (int i = 0; i < VD; i++) acc[i] = acc[i] * c + e * v[vo + i];\n"
+    "    m = mn;\n"
+    "  }\n"
+    "  int oo = (t * H + h) * VD;\n"
+    "  for (int i = 0; i < VD; i++) o[oo + i] = acc[i] / l;\n"
+    "}\n";
+
+static int gl_attn(const attn_op *p, int rows_per_dispatch, int reps, float *out, gl_times *tm,
+                   char *err, size_t errn) {
+  char src[8192];
+  snprintf(src, sizeof src, ATTN_SHADER, p->heads, p->kv_heads, p->qk, p->vd);
+  GLuint prog = gl_program(src, err, errn);
+  if (!prog) return -1;
+  double t0 = now_ms();
+  GLuint bq = gl_buffer(p->q, (long)p->seq * p->heads * p->qk * 4);
+  GLuint bk = gl_buffer(p->k, (long)p->seq * p->kv_heads * p->qk * 4);
+  GLuint bv = gl_buffer(p->v, (long)p->seq * p->kv_heads * p->vd * 4);
+  GLuint bo = gl_buffer(NULL, (long)p->seq * p->heads * p->vd * 4);
+  gl.UseProgram(prog);
+  gl.Uniform1i(gl.GetUniformLocation(prog, "u_seq"), p->seq);
+  gl.Uniform1i(gl.GetUniformLocation(prog, "u_window"), p->window);
+  gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, bq);
+  gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bk);
+  gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, bv);
+  gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bo);
+  GLsync s0 = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (gl_wait(s0)) { snprintf(err, errn, "upload fence failed"); return -1; }
+  gl.DeleteSync(s0);
+  tm->upload_ms = now_ms() - t0;
+  GLuint q;
+  gl.GenQueries(1, &q);
+  /* rows_per_dispatch counts positions here: a dispatch covers that many query positions. */
+  int per = rows_per_dispatch < p->seq ? rows_per_dispatch : p->seq;
+  double best_d = 1e30, best_g = 1e30;
+  for (int rep = 0; rep < reps; rep++) {
+    double t1 = now_ms(), gpu = 0;
+    int nd = 0;
+    for (int ts = 0; ts < p->seq; ts += per) {
+      int nt = p->seq - ts < per ? p->seq - ts : per;
+      gl.Uniform1i(gl.GetUniformLocation(prog, "u_t0"), ts);
+      gl.Uniform1i(gl.GetUniformLocation(prog, "u_nt"), nt);
+      if (gl.BeginQuery) gl.BeginQuery(GL_TIME_ELAPSED, q);
+      gl.DispatchCompute((GLuint)((nt * p->heads + 63) / 64), 1, 1);
+      if (gl.EndQuery) gl.EndQuery(GL_TIME_ELAPSED);
+      GLsync s = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+      if (gl_wait(s)) { snprintf(err, errn, "dispatch fence failed"); return -1; }
+      gl.DeleteSync(s);
+      GLuint64 ns = 0;
+      if (gl.GetQueryObjectui64v) gl.GetQueryObjectui64v(q, GL_QUERY_RESULT, &ns);
+      gpu += ns / 1e6;
+      nd++;
+    }
+    double d = now_ms() - t1;
+    if (d < best_d) { best_d = d; best_g = gpu; tm->dispatches = nd; }
+  }
+  gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+  double t2 = now_ms();
+  gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, bo);
+  gl.GetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (long)p->seq * p->heads * p->vd * 4, out);
+  tm->readback_ms = now_ms() - t2;
+  tm->dispatch_ms = best_d;
+  tm->gpu_ms = best_g;
+  GLenum e = gl.GetError();
+  GLuint bufs[4] = {bq, bk, bv, bo};
+  gl.DeleteBuffers(4, bufs);
+  if (e != GL_NO_ERROR) { snprintf(err, errn, "GL error 0x%x", e); return -1; }
+  return 0;
+}
+
 /* ---- driver ---------------------------------------------------------------------------- */
 static void json_str(const char *s) {
   putchar('"');
@@ -707,6 +846,7 @@ int main(int argc, char **argv) {
   const char *tp = strstr(txt, "tensor=");
   if (tp) sscanf(tp + 7, "%255[^\n]", tensor);
   int is_kron = strstr(txt, "op=kron") != NULL;
+  int is_attn = strstr(txt, "op=attn") != NULL;
   int all_pass = 1;
   char err[4096] = "";
   const char *renderer = NULL;
@@ -732,7 +872,55 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (!is_kron) {
+  if (is_attn) {
+    attn_op p;
+    p.seq = (int)op_int(txt, "tokens");
+    p.heads = (int)op_int(txt, "heads");
+    p.kv_heads = (int)op_int(txt, "kv_heads");
+    p.qk = (int)op_int(txt, "qk");
+    p.vd = (int)op_int(txt, "vd");
+    p.window = (int)op_int(txt, "window");
+    if (p.seq <= 0 || p.heads <= 0 || p.kv_heads <= 0 || p.heads % p.kv_heads || p.qk <= 0 ||
+        p.vd <= 0 || p.vd > 256 || p.window < 0) {
+      fprintf(stderr, "unsupported attention geometry\n");
+      return 2;
+    }
+    long ql, kl, vl, ol;
+    long nq = (long)p.seq * p.heads * p.qk, nk = (long)p.seq * p.kv_heads * p.qk;
+    long nv = (long)p.seq * p.kv_heads * p.vd, no = (long)p.seq * p.heads * p.vd;
+    p.q = read_file(dir, "q.bin", &ql);
+    p.k = read_file(dir, "kk.bin", &kl);
+    p.v = read_file(dir, "v.bin", &vl);
+    p.o_want = read_file(dir, "o.bin", &ol);
+    if (!p.q || !p.k || !p.v || !p.o_want || ql != nq * 4 || kl != nk * 4 || vl != nv * 4 || ol != no * 4) {
+      fprintf(stderr, "%s: files missing or of the wrong size\n", dir);
+      return 2;
+    }
+    /* MACs: QK^T and PV over the causal (windowed) triangle */
+    double pairs = 0;
+    for (int t = 0; t < p.seq; t++) pairs += (p.window > 0 && t + 1 > p.window) ? p.window : t + 1;
+    double macs = pairs * p.heads * (p.qk + p.vd);
+    float *o = malloc(sizeof(float) * (size_t)no);
+    if (want_ref) {
+      double best = 1e30;
+      for (int r = 0; r < reps; r++) { double t = now_ms(); attn_ref(&p, o); t = now_ms() - t; if (t < best) best = t; }
+      all_pass &= report(dir, tensor, "ref", no, macs, best, o, p.o_want, 1e-5, NULL, NULL);
+    }
+    if (want_gl && gl_ok) {
+      gl_times tm = {0};
+      memset(o, 0, sizeof(float) * (size_t)no);
+      if (gl_attn(&p, rpd, reps, o, &tm, err, sizeof err)) {
+        printf("{\"backend\":\"gl\",\"pass\":false,\"error\":");
+        json_str(err);
+        printf("}\n");
+        all_pass = 0;
+      } else {
+        char name[64];
+        snprintf(name, sizeof name, "gl positions_per_dispatch=%d", rpd > p.seq ? p.seq : rpd);
+        all_pass &= report(dir, tensor, name, no, macs, tm.dispatch_ms, o, p.o_want, 1e-4, &tm, renderer);
+      }
+    }
+  } else if (!is_kron) {
     cq_op w;
     memset(&w, 0, sizeof w);
     w.out = (int)op_int(txt, "out");
