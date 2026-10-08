@@ -172,6 +172,7 @@ All with the pinned model, greedy, full depth (20), f32 KV, unconstrained unless
 | `cells_and_confidence_match_the_reference` | **fails at upstream 4de5049**: 1.67e-4 vs a 1e-4 tolerance on one global RMS. Per cell ≤ 4.6e-5 of the cell's RMS; worst element 24,350,496 vs 24,350,512 (6.6e-7 of itself, f32 rounding at 2.4e7) | host and emulated ARM; recorded in `gate.sh`, not skipped |
 | Corrupted containers (1,511 single-field cases, x86_64 and armv7) | all refused or loaded, none panics, none aborts, **after** the fixes below | host, emulated ARM |
 | Fixture suite, ARMv7 binary vs host | identical text, status, calls and token counts on every request | emulated ARM, `results/emulated-arm-suite-f32-full.jsonl` |
+| NEON build (`needle-jibo-neon`), fixture suite | identical text, token counts, status and calls on all 21 requests | emulated ARM, `results/emulated-arm-suite-neon.jsonl` |
 | ARMv7 ABI | `needle-jibo`, `needle-rs`, `jibo-cq-bench`: ELF32 ARM, hard float, `v7`; highest `GLIBC_2.18`, `GCC_4.3.0`; NEEDED libc, libm, libdl, libpthread, librt, libgcc_s | `results/abi-check.txt` |
 
 ### Task behaviour (G6, first pass)
