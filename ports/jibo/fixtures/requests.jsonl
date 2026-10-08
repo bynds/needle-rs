@@ -1,0 +1,21 @@
+{"request_id": "num-words", "query": "Set a timer for seven and a half minutes."}
+{"request_id": "num-digits", "query": "Start a 90 second timer."}
+{"request_id": "num-hours", "query": "Timer for one hour please."}
+{"request_id": "num-mixed", "query": "Can you time 2 minutes and 15 seconds?"}
+{"request_id": "enum-dance", "query": "Jibo, do a little dance!"}
+{"request_id": "enum-nod", "query": "Nod your head if you agree."}
+{"request_id": "enum-unsupported", "query": "Do a backflip."}
+{"request_id": "volume", "query": "Turn the volume down to three."}
+{"request_id": "volume-mute", "query": "Mute yourself."}
+{"request_id": "cancel", "query": "Never mind, cancel the timer."}
+{"request_id": "negation", "query": "Don't set a timer, I was just talking."}
+{"request_id": "no-tool", "query": "What's the capital of France?"}
+{"request_id": "smalltalk", "query": "Hey Jibo, how are you today?"}
+{"request_id": "missing-arg", "query": "Set a timer."}
+{"request_id": "multi", "query": "Set a timer for five minutes and then do a dance."}
+{"request_id": "contradictory", "query": "Set the volume to two, no wait, eight."}
+{"request_id": "asr-noisy", "query": "uh set a uh timer for ten minutes um"}
+{"request_id": "asr-lower", "query": "jibo timer three minutes"}
+{"request_id": "unicode", "query": "Pon un temporizador de cinco minutos, por favor — gracias 🙂"}
+{"request_id": "quotes", "query": "Say \"dance\" \\ then nod."}
+{"request_id": "out-of-range", "query": "Set the volume to eleven."}

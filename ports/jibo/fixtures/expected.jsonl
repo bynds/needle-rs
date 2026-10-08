@@ -1,0 +1,21 @@
+{"request_id": "num-words", "expected": [{"name": "start_timer", "arguments": {"seconds": 450}}]}
+{"request_id": "num-digits", "expected": [{"name": "start_timer", "arguments": {"seconds": 90}}]}
+{"request_id": "num-hours", "expected": [{"name": "start_timer", "arguments": {"seconds": 3600}}]}
+{"request_id": "num-mixed", "expected": [{"name": "start_timer", "arguments": {"seconds": 135}}]}
+{"request_id": "enum-dance", "expected": [{"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "enum-nod", "expected": [{"name": "play_animation", "arguments": {"name": "nod"}}]}
+{"request_id": "enum-unsupported", "expected": "no_call_or_refusal"}
+{"request_id": "volume", "expected": [{"name": "set_volume", "arguments": {"level": 3}}]}
+{"request_id": "volume-mute", "expected": [{"name": "set_volume", "arguments": {"level": 0}}]}
+{"request_id": "cancel", "expected": [{"name": "cancel_timer", "arguments": {}}]}
+{"request_id": "negation", "expected": []}
+{"request_id": "no-tool", "expected": []}
+{"request_id": "smalltalk", "expected": []}
+{"request_id": "missing-arg", "expected": "needs_clarification_or_no_call"}
+{"request_id": "multi", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}, {"name": "play_animation", "arguments": {"name": "dance"}}]}
+{"request_id": "contradictory", "expected": [{"name": "set_volume", "arguments": {"level": 8}}]}
+{"request_id": "asr-noisy", "expected": [{"name": "start_timer", "arguments": {"seconds": 600}}]}
+{"request_id": "asr-lower", "expected": [{"name": "start_timer", "arguments": {"seconds": 180}}]}
+{"request_id": "unicode", "expected": [{"name": "start_timer", "arguments": {"seconds": 300}}]}
+{"request_id": "quotes", "expected": "any"}
+{"request_id": "out-of-range", "expected": "invalid_or_clamped"}

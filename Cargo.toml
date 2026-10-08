@@ -6,6 +6,8 @@ members = [
     "crates/needle-wasm",
     "crates/needle-cli",
     "crates/needle-python",
+    # The Jibo port's runner (ports/jibo/README.md). Not part of the published crates.
+    "ports/jibo/runner",
 ]
 resolver = "2"
 

@@ -1,0 +1,20 @@
+[
+  {
+    "name": "start_timer",
+    "description": "Propose a timer for a duration explicitly requested by the user.",
+    "parameters": {
+      "type": "object",
+      "properties": {"seconds": {"type": "integer"}},
+      "required": ["seconds"]
+    }
+  },
+  {
+    "name": "play_animation",
+    "description": "Propose one of the supported named animations.",
+    "parameters": {
+      "type": "object",
+      "properties": {"name": {"type": "string", "enum": ["dance", "nod"]}},
+      "required": ["name"]
+    }
+  }
+]

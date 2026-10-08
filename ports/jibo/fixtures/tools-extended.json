@@ -1,0 +1,6 @@
+[
+  {"name": "start_timer", "description": "Propose a timer for a duration explicitly requested by the user.", "parameters": {"type": "object", "properties": {"seconds": {"type": "integer", "minimum": 1, "maximum": 86400}}, "required": ["seconds"]}},
+  {"name": "cancel_timer", "description": "Propose cancelling the running timer.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "play_animation", "description": "Propose one of the supported named animations.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": ["dance", "nod"]}}, "required": ["name"]}},
+  {"name": "set_volume", "description": "Propose a speaker volume level from 0 (mute) to 10 (loudest).", "parameters": {"type": "object", "properties": {"level": {"type": "integer", "minimum": 0, "maximum": 10}}, "required": ["level"]}}
+]

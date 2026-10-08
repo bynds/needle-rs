@@ -1,0 +1,24 @@
+[package]
+name = "needle-jibo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Needle 3 on the original Jibo: a bounded, metadata-rich text-to-tool runner"
+publish = false
+
+[[bin]]
+name = "needle-jibo"
+path = "src/main.rs"
+
+[features]
+# Serial by default: Jibo leaves about one core of headroom, and the runner is one worker.
+# `parallel` turns on needle-core's rayon kernels for host comparisons only.
+default = []
+parallel = ["needle-infer/parallel"]
+
+[dependencies]
+needle-infer = { path = "../../../crates/needle-infer" }
+needle-core = { path = "../../../crates/needle-core", features = ["std"] }
+serde_json = "1"
