@@ -1,0 +1,32 @@
+# ARMv7 builds of ports/jibo/c under qemu-arm against the glibc 2.21 stand-in sysroot. Correctness only.
+# model sha256 c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38, C sources cefde7648e86e68e77ae8e9fd7708b3c9dbe4364
+# scripts/c-check.sh --arm: arm-plain = stand-in default FPU (VFPv3 + NEON registers, no ND_NEON), arm-neon = -DND_NEON
+PASS arm-plain abi
+PASS arm-plain math
+PASS arm-plain tokenizer
+PASS arm-plain json
+PASS arm-plain grammar
+PASS arm-plain runner
+PASS arm-plain cq
+PASS arm-plain model
+PASS arm-plain model-d4
+PASS arm-plain model-d13
+PASS arm-plain corrupt
+PASS arm-plain serve-edge
+PASS arm-neon abi
+PASS arm-neon math
+PASS arm-neon tokenizer
+PASS arm-neon json
+PASS arm-neon grammar
+PASS arm-neon runner
+PASS arm-neon cq
+PASS arm-neon model
+PASS arm-neon model-d4
+PASS arm-neon model-d13
+PASS arm-neon corrupt
+PASS arm-neon serve-edge
+# build-jibo.sh's shipped plain flags (-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard), now c-check's arm-plain:
+PASS armv7-vfpv3-d16 model (full depth, 113-token prompt, 12 decode steps, f32 and int8 KV, confidence head)
+PASS armv7-vfpv3-d16 model-d4
+PASS armv7-vfpv3-d16 serve-edge (27 responses byte-identical to the x86-64 Rust runner)
+PASS armv7-vfpv3-d16 suite21 (fixtures/requests.jsonl, --debug-text --confidence: 21 responses byte-identical to the x86-64 Rust runner)
