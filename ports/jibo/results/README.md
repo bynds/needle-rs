@@ -13,3 +13,12 @@ One file per run. The label in each file name is the evidence level:
 Suite files are `needle-jibo bench` output: one response per line (with `bench.warmup`), then a
 summary line. Score them with `scripts/score.py fixtures/expected.jsonl FILE`. The completions in
 them are answers to the mock fixture requests, nothing else.
+
+## Notes on individual runs
+
+- `emulated-arm-suite-f32-full.jsonl`: `needle-jibo` sha256
+  `9581c95af8a89678632964b97bcfd9eb56ca3e491ccdcf75c0f750f040b9d79b`, built from commit 0bab4f5
+  (the streaming fix, before the loader bounds checks, which add refusals only and change no
+  arithmetic). 21/21 responses identical to `host-reference-suite-f32-full.jsonl` (first measured
+  repetition) in text, status, calls and token counts. Its `vm_hwm_kb` is qemu's own process and
+  `cpu_s` reads 0 under qemu-user: neither is a robot number.

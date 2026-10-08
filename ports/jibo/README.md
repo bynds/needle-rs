@@ -155,7 +155,7 @@ All with the pinned model, greedy, full depth (20), f32 KV, unconstrained unless
 | Engram, attention, HadamardMLP components vs JAX | ≤ 1.1e-5 relative | host |
 | `cells_and_confidence_match_the_reference` | **fails at upstream 4de5049**: 1.67e-4 vs a 1e-4 tolerance on one global RMS. Per cell ≤ 4.6e-5 of the cell's RMS; worst element 24,350,496 vs 24,350,512 (6.6e-7 of itself, f32 rounding at 2.4e7) | host and emulated ARM; recorded in `gate.sh`, not skipped |
 | Corrupted containers (1,511 single-field cases, x86_64 and armv7) | all refused or loaded, none panics, none aborts, **after** the fixes below | host, emulated ARM |
-| Fixture suite, ARMv7 binary vs host | identical text, status, calls and token counts on every request | emulated ARM, `results/qemu-armv7-suite.jsonl` |
+| Fixture suite, ARMv7 binary vs host | identical text, status, calls and token counts on every request | emulated ARM, `results/emulated-arm-suite-f32-full.jsonl` |
 | ARMv7 ABI | `needle-jibo`, `needle-rs`, `jibo-cq-bench`: ELF32 ARM, hard float, `v7`; highest `GLIBC_2.18`, `GCC_4.3.0`; NEEDED libc, libm, libdl, libpthread, librt, libgcc_s | `results/abi-check.txt` |
 
 ### Task behaviour (G6, first pass)
@@ -231,7 +231,7 @@ target; `backend/` has bit-identical NEON versions ready to time.
    minutes." the pinned Rust engine (f32 KV, 1 thread) emits `seconds: 7.5` (rejected: not an
    integer); the official `linux-armv7` binary (its own serving policy; config.json declares 8-bit
    KV and activations) emits `seconds: 750` with confidence 0.47 and flags it `ungrounded` itself.
-   Neither is right (450). See `results/official-armv7-qemu-suite.jsonl`.
+   Neither is right (450). See `results/official-native-emulated-suite.jsonl` (when complete).
 6. **The official `linux-armv7` binary cannot run on Jibo**: it needs `GLIBC_2.34`. It is a
    reference under emulation only.
 7. **The published config ships 8-bit KV** (`kv_cache_bits: 8`, `kv_window: 256`); the Rust
