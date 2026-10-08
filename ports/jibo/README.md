@@ -227,11 +227,18 @@ target; `backend/` has bit-identical NEON versions ready to time.
    is the runner's job and it does it.
 4. **The engine returns unterminated payloads** when the budget runs out; `--json` prints them as
    if complete. The runner reports `incomplete`.
-5. **Three references disagree, as the handoff warned.** For "Set a timer for seven and a half
-   minutes." the pinned Rust engine (f32 KV, 1 thread) emits `seconds: 7.5` (rejected: not an
-   integer); the official `linux-armv7` binary (its own serving policy; config.json declares 8-bit
-   KV and activations) emits `seconds: 750` with confidence 0.47 and flags it `ungrounded` itself.
-   Neither is right (450). See `results/official-native-emulated-suite.jsonl` (when complete).
+5. **Three references, and the serving policy matters more than the arithmetic.** On the 21
+   fixtures with the four-tool catalogue, the official `linux-armv7` binary (under emulation) emits
+   the same calls as the pinned Rust engine wherever it emits any; the difference is its serving
+   layer, which suppresses calls it judges ungrounded or unconfident. That turns three wrong Rust
+   candidates (small talk and "do a backflip" as 30-minute timers, an invented 300 s for "Set a
+   timer.") into `[]`, and also drops one correct call (the Spanish five-minute timer). Its
+   `validation.ungrounded` flag marks all six schema-valid but wrong Rust answers, and four right
+   ones; its raw `confidence` ranges 0.008 to 0.95 and is not calibrated. A grounding check of that
+   kind belongs in the application, measured on robot tasks. The prompt matters too: with the
+   two-tool `tools.json`, "seven and a half minutes" gives `7.5` (Rust) and `750` (official, flagged
+   ungrounded, confidence 0.47); with four tools both give 950. The right answer is 450.
+   `results/official-native-emulated-suite.jsonl`.
 6. **The official `linux-armv7` binary cannot run on Jibo**: it needs `GLIBC_2.34`. It is a
    reference under emulation only.
 7. **The published config ships 8-bit KV** (`kv_cache_bits: 8`, `kv_window: 256`); the Rust

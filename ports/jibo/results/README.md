@@ -22,3 +22,8 @@ them are answers to the mock fixture requests, nothing else.
   arithmetic). 21/21 responses identical to `host-reference-suite-f32-full.jsonl` (first measured
   repetition) in text, status, calls and token counts. Its `vm_hwm_kb` is qemu's own process and
   `cpu_s` reads 0 under qemu-user: neither is a robot number.
+- `official-native-emulated-suite.jsonl`: `linux-armv7/needle` sha256
+  `0d7fd5a896ebb6db25e32e2a3f571602cb8f33ffd89f3286faeb54c7fe874d4c`, `--threads 1`, one `--prompt`
+  per request against `fixtures/tools-extended.json`, qemu-arm 8.2.2 with Ubuntu's armhf glibc 2.39.
+  Its own JSON per line, plus `request_id` and `exit`. Its `prefill_tps`, `decode_tps` and
+  `peak_ram_mb` are emulator numbers.
