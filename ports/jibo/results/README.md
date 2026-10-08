@@ -27,3 +27,7 @@ them are answers to the mock fixture requests, nothing else.
   per request against `fixtures/tools-extended.json`, qemu-arm 8.2.2 with Ubuntu's armhf glibc 2.39.
   Its own JSON per line, plus `request_id` and `exit`. Its `prefill_tps`, `decode_tps` and
   `peak_ram_mb` are emulator numbers.
+- `host-reference-suite195-{dev,heldout}-f32.jsonl`: the 195-request suite, full depth, f32 KV,
+  `--debug-text --confidence`, run by a build without the grounding check (its `grounded` is
+  null); every grounding figure in the README is `needle-jibo regrade` of these files. Their
+  timings were taken while emulated ARM runs shared the host: not timing evidence.

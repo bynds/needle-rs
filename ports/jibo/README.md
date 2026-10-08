@@ -26,18 +26,22 @@ are not speed claims.
 
 | Path | What it is |
 | --- | --- |
-| `runner/` (`needle-jibo`) | One loaded model, bounded requests on stdin/stdout or a 0660 Unix socket with a bounded queue. Authorized tool catalogue, admission on the real prompt length, deadlines, memory/thermal `busy` gates, schema validation, explicit outcomes, phase timings. Serial (no rayon). Also `bench` and `dump-op`. |
+| `runner/` (`needle-jibo`) | One loaded model, bounded requests on stdin/stdout or a 0660 Unix socket with a bounded queue. Authorized tool catalogue, admission on the real prompt length, deadlines, memory/thermal `busy` gates, schema validation, explicit outcomes, phase timings. Grounding check (`grounding.rs`). Serial (no rayon). Also `bench`, `regrade` and `dump-op`. |
 | `runner/tests/container_robustness.rs` | 1,511 single-field corruptions of the real container; every one must be refused or loaded, never panic. Runs under ARMv7 emulation. |
-| `backend/jibo-cq-bench.c` | One real operation (a CQ projection or a learned Kronecker MLP stage) on scalar C, NEON and desktop-GL 4.3 compute, checked against the Rust engine's output and timed with uploads, fences and readback counted. |
+| `client/needle-client.js` | ES5 client for the runner's socket (built-in `net` only): only a `candidate` reaches a handler, all or nothing. `needle-client.test.js` tests it. |
+| `../../crates/needle-core/src/cq_neon.rs` | The engine's ARMv7 NEON CQ kernels (feature `neon`, with `-C target-feature=+neon`); `needle-jibo-neon` is built with them. |
+| `backend/jibo-cq-bench.c` | One real operation (a CQ projection, a learned Kronecker MLP stage, or causal grouped-query attention) on scalar C, NEON and desktop-GL 4.3 compute, checked against the Rust engine's output and timed with uploads, fences and readback counted. |
 | `scripts/fetch-sysroot.sh` | A stand-in glibc 2.21 armhf sysroot (Ubuntu 15.04 packages, sha256-pinned). |
 | `scripts/jibo-cc-standin.sh` | A linker/compiler driver with the same contract as the owner's `jibo-armcc`. |
 | `scripts/build-jibo.sh` | The ARMv7 build: each package in its own cargo invocation, ABI check, feature tree, manifest. |
 | `scripts/check-jibo-abi.sh` | Will it load on Jibo: ELF32 ARM, hard-float ABI, `v7`, the armhf loader, allowed `NEEDED`, nothing above `GLIBC_2.21` or `GCC_4.8.0`, no libstdc++. |
 | `scripts/gate.sh` | The release gate: fails, not skips, when the model or oracle vectors are absent. |
-| `scripts/robot-run.sh` | The owner-run robot steps. |
+| `scripts/prepare-robot.sh` | One checksummed bundle with everything a robot session needs. |
+| `scripts/preflight.sh` | Runs on the robot (POSIX sh): checksums, loader, glibc, libgcc_s, that each binary starts, memory, tmpfs. |
+| `scripts/robot-run.sh` | The owner-run robot steps; preflight before each. |
 | `scripts/score.py` | Scores runner output against `fixtures/expected.jsonl`. |
 | `tools/make_synthetic_v3.py` | A seeded-random container at the shipped geometry and bit scheme, written by upstream's own exporter, for when the model cannot be fetched. |
-| `fixtures/` | The handoff's `tools.json` and `query.txt` (byte-stable), a four-tool catalogue and 21 requests with expectations. Mock tools only: none is a verified Jibo API. |
+| `fixtures/` | The handoff's `tools.json` and `query.txt` (byte-stable), a four-tool catalogue and 21 requests with expectations, and `make_suite.py`'s 195 requests over six tools, split into dev (tune here) and held-out (report here). Mock tools only: none is a verified Jibo API. |
 | `manifests/` | Commits, hashes, toolchains, licences. |
 | `results/` | Machine-readable outcomes, one file per run, labelled. |
 
@@ -103,14 +107,15 @@ needle-jibo serve needle3.cact --tools catalogue.json --socket /run/needle.sock 
 echo '{"request_id":"u1","query":"Start a 90 second timer.","tools":["start_timer"]}' | needle-jibo serve ...
 ```
 
-A response (real output, host reference, full depth, f32 KV):
+A response (real output, host reference, full depth, f32 KV; `grounded` as the current runner
+reports it):
 
 ```json
 {"request_id":"num-digits","status":"candidate",
  "calls":[{"name":"start_timer","arguments":{"seconds":90}}],
  "model_sha256":"c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38",
  "depth":20,"kv_precision":"f32","constrained":false,
- "prompt_truncated":false,"stop_reason":"im_end","schema_valid":true,"grounded":null,
+ "prompt_truncated":false,"stop_reason":"im_end","schema_valid":true,"grounded":true,
  "confidence_raw":null,
  "tokens":{"prompt":201,"generated":29,"budget":256,"positions":230},
  "timing":{"queue_ms":0.0,"wall_ms":2846.094,"tokenize_ms":4.26,"prefill_ms":2328.113,
@@ -121,9 +126,10 @@ A response (real output, host reference, full depth, f32 KV):
 
 | Status | Meaning |
 | --- | --- |
-| `candidate` | The turn ended on its own (`im_end`/`eos`), both markers closed, every call passes the schema. Still only a proposal: grounding and policy are the application's (`grounded` is always `null` here). |
+| `candidate` | The turn ended on its own (`im_end`/`eos`), both markers closed, every call passes the schema, and (by default) every number and free-text argument is something the query says. Still only a proposal: intent and policy are the application's. |
 | `no_call` | The model answered `[]`: a considered abstention, distinct from every failure below. |
-| `needs_clarification` | A call omitted a required argument. Not invented. |
+| `needs_clarification` | A call omitted a required argument, or (grounding) an argument the query does not state: `ungrounded` names it and `rejected_calls` holds the proposal, so the application can ask. |
+| `low_confidence` | Only with `--min-confidence`: the confidence head scored the candidate below it. Off by default (it did not pay on the dev split). |
 | `unsupported` | A call named a tool outside the request's offered set. |
 | `invalid_output` | No marker, an unterminated marker, malformed JSON, or an argument of the wrong type, out of range, outside its enum, or undeclared. `detail` says which. |
 | `incomplete` | The token budget ran out. The engine's own extractor would hand back the half payload; the runner does not. |
@@ -137,6 +143,16 @@ The catalogue may use `string` (with `enum`, `maxLength`), `integer` and `number
 objects, `anyOf`, `additionalProperties`, ...) is refused at startup rather than ignored. The
 catalogue's own bytes, key order included, go into the prompt. Nothing is logged;
 `--debug-text` adds the completion to responses.
+
+**Grounding** (`--grounding enforce`, the default). A schema cannot tell "set a timer for seven
+and a half minutes" → 950 s from 450 s. The runner reads the query for what it states and requires
+each argument to be one of those: a `*second*` parameter a stated duration ("2 minutes and 15
+seconds" = 135, "an hour and a half" = 5400), `hour`/`minute` a stated clock time ("7:30 pm",
+"half past seven", "noon"), any other number a stated number or an alias (mute/off = 0, max = the
+schema maximum), free text a substring. `strict` also requires enum values to be said ("wave" for
+"Wave hello!"). `report` annotates only; `off` skips it. English number words only: a Spanish or
+French request asks for clarification instead. `needle-jibo regrade` re-applies a policy to saved
+responses without the model.
 
 ## Results
 
@@ -183,6 +199,36 @@ seconds" gives 120 s; "how are you today?" and "do a backflip" give a 30-minute 
 timer." invents 300 s. `--kv-int8` turns "Mute yourself" into a 60-second timer. Same aggregate
 score, different decisions: compare decisions, not scores.
 
+### The 195-request suite and grounding (G6)
+
+`fixtures/make_suite.py`, six mock tools (timer, cancel, alarm with hour and minute, volume,
+animation, weather by city), 98 dev and 97 held-out requests, about a quarter of them negatives
+(small talk, numbers that are not requests, absent tools, out-of-range values, missing values).
+The policy was chosen on dev (grounding on, no confidence gate) before the held-out split was
+scored. Full depth, f32 KV, host reference.
+
+| | dev exact | dev unsafe | **held-out exact** | **held-out unsafe** |
+| --- | --- | --- | --- | --- |
+| schema validation only (`--grounding off`) | 62 / 97 | 33 | 47 / 97 | **42** |
+| grounding (default) | 65 | 5 | 51 | **5** |
+| grounding `strict` | 66 | 4 | 52 | 3 |
+| grounding + `--min-confidence 0.3` (dev only) | 63 | 4 | | |
+
+Unsafe means the runner would have handed the application a `candidate` that differs from the
+expectation. Without grounding that is 43% of held-out requests; with it, 5%. On both splits
+grounding refused no correct call except the two non-English ones ("Pon un temporizador de cinco
+minutos", "Mets un minuteur de dix minutes"), which become `needs_clarification`. What still gets
+through is intent, not values: "My dog is called Max" → weather for Max, "Five minutes ago I ate
+lunch" → a five-minute timer, "I said I don't want to dance" → dance, "What's the capital of
+France?" → weather for France. Those need a policy above the runner (an addressed-to-the-robot
+check, the Decider as a second opinion), measured on real robot requests. The confidence head
+did not separate right from wrong well enough to pay on dev: at 0.3 it removed one more unsafe
+answer and two correct ones. Even with grounding, 51 of 97 held-out requests are exactly right;
+the rest are mostly refusals the application must handle (`needs_clarification`, `no_call`).
+
+`results/host-reference-suite195-{dev,heldout}-f32.jsonl`; re-grade them with any policy:
+`needle-jibo regrade FILE --tools fixtures/suite-tools.json --requests fixtures/suite-heldout.jsonl --grounding strict`.
+
 ### Operations: CPU and GPU (G5, first pass)
 
 `jibo-cq-bench` on real tensors of the pinned model, 16 tokens of seeded activations, against the
@@ -194,6 +240,7 @@ Rust kernels' output (`needle-jibo dump-op`):
 | `l0.out_proj` 768x768 CQ2 | bit-identical | bit-identical | 1.5e-6 at every `--tt` 1/8/16 x rows/dispatch 64/256/all (llvmpipe) |
 | `embedding` 8192x768 CQ4 (the tied LM head) | bit-identical | bit-identical | 2.3e-6 (llvmpipe) |
 | `l0.mlp.w1` learned 32x32 Kronecker stage | bit-identical | bit-identical | bit-identical (llvmpipe) |
+| causal GQA attention, 64 positions, 12 heads / 2 KV, global and 16-wide window | 1.0e-6 (glibc `expf` vs the engine's `exp`) | — | 1.6–2.0e-6, online softmax, 1 to 10 dispatches (llvmpipe) |
 
 So the NEON kernels reproduce the engine's ARMv7 arithmetic exactly (non-fused VMLA in the
 engine's lane order) and the GL kernels agree to f32 rounding. Their speed on the Tegra is the
@@ -241,7 +288,9 @@ target; `backend/` has bit-identical NEON versions ready to time.
    `results/official-native-emulated-suite.jsonl`.
 6. **The official `linux-armv7` binary cannot run on Jibo**: it needs `GLIBC_2.34`. It is a
    reference under emulation only.
-7. **The published config ships 8-bit KV** (`kv_cache_bits: 8`, `kv_window: 256`); the Rust
+7. **Schema-valid is not safe.** Without grounding, 42 of 97 held-out requests produce an
+   executable wrong call; grounding the arguments in the query brings that to 5. See the table above.
+8. **The published config ships 8-bit KV** (`kv_cache_bits: 8`, `kv_window: 256`); the Rust
    runtime defaults to f32. The runner keeps f32 as the reference and reports `kv_precision` on every
    response; int8 changed 2 of 21 decisions here.
 
@@ -256,44 +305,61 @@ On this branch, each its own commit with a regression test:
 - `needle-infer` loader: `CactV3Geometry::check_bounds` (fields and u64 products, before anything
   is sized), tokenizer piece count bounded by its blob, zero Engram tables rejected.
 - `needle-core`: `CqWeight::from_blob` checks its size arithmetic and enforces `MAX_GROUP`.
+- `needle-core`: ARMv7 NEON CQ kernels (`cq_neon.rs`) behind the `neon` feature, in stable inline
+  assembly. Default builds are unchanged. Stable Rust 1.87 sets no `cfg(target_feature)` for ARM
+  features, so the feature is the switch and must come with `-C target-feature=+neon` (rustc warns
+  that `neon` is an unstable `-Ctarget-feature`; it is applied, and the build fails without it).
+  Same lane order and non-fused `VMLA` as the scalar kernels: bit-identical in a unit test under
+  emulation; NEON flushes denormals, the one possible difference.
+- `needle-infer` test: `cells_and_confidence_match_the_reference` judges each residual cell
+  against its own RMS (it failed at upstream on one global RMS; the worst cell is 4.6e-5).
 
-No numerics changed: the oracle comparisons above are identical before and after.
+No numerics changed in the default build: the oracle comparisons above are identical before and
+after.
 
 ## On the robot
 
 Nothing has been copied to or run on a Jibo. Running anything there, even from `/tmp`, is a
-deployment step inside the owner's agreed scope. With `JIBO_SSH` (prefer `jibo-skill`),
-`JIBO_DIR` (check `df -T` first: `/tmp` may be RAM), `BUILD`, `MODEL`, `OPS` and, for the GPU,
-`JIBO_ENV` (the game host's `run.sh` display access and shim):
+deployment step inside the owner's agreed scope. First, on the development host:
 
 ```bash
-ports/jibo/scripts/robot-run.sh env      # glibc, libgcc_s, df -T, MemAvailable: confirms the ABI assumptions
-ports/jibo/scripts/robot-run.sh deploy
-ports/jibo/scripts/robot-run.sh smoke    # info + the handoff's fixture, with peak RSS
-ports/jibo/scripts/robot-run.sh status   # before, and again after each step below
-ports/jibo/scripts/robot-run.sh suite    # 21 requests, 1 warmup + 3 measured: physical Jibo CPU
-ports/jibo/scripts/robot-run.sh ops      # scalar vs NEON on the real tensors
-ports/jibo/scripts/robot-run.sh gl       # GL compute, --tt x --rows-per-dispatch sweep: physical Jibo GPU
+JIBO_SYSROOT=/opt/jibo-sysroot ports/jibo/scripts/prepare-robot.sh out/bundle   # or JIBO_CC=...
+```
+
+That builds `needle-jibo`, `needle-jibo-neon`, `needle-rs` and `jibo-cq-bench`, checks their ABI,
+adds the model, fixtures, client, reference vectors for the measured operations and
+`preflight.sh`, and writes `MANIFEST.sha256` (about 50 MB, mostly the model). Then, with `JIBO_SSH` (prefer
+`jibo-skill`), `JIBO_DIR` (the preflight reports the filesystem: `/tmp` may be RAM), `BUNDLE` and,
+for the GPU, `JIBO_ENV` (the game host's `run.sh` display access and shim):
+
+```bash
+ports/jibo/scripts/robot-run.sh env        # before copying: glibc, libgcc_s, mounts, MemAvailable, CPU
+ports/jibo/scripts/robot-run.sh deploy     # copies the bundle, then the full preflight (every sha256)
+ports/jibo/scripts/robot-run.sh smoke      # info + the handoff's fixture, with peak RSS
+ports/jibo/scripts/robot-run.sh status     # before, and again after each step below
+ports/jibo/scripts/robot-run.sh suite                       # 21 requests: physical Jibo CPU
+BIN=needle-jibo-neon ports/jibo/scripts/robot-run.sh suite  # the same with the NEON kernels
+ports/jibo/scripts/robot-run.sh ops        # scalar vs NEON on the real tensors
+ports/jibo/scripts/robot-run.sh gl         # GL compute sweep: physical Jibo GPU
+ports/jibo/scripts/robot-run.sh suite-big  # the 195 requests, when there is time
 ports/jibo/scripts/robot-run.sh cleanup
 ```
 
-Produce `OPS` with `needle-jibo dump-op weights/needle3.cact --tensor NAME --tokens 16 --out ops/NAME`
-for `l0.q_proj`, `l0.out_proj`, `embedding` and `l0.mlp.w1` (and `--tokens 1` for decode shapes).
-Stage the steps: first the fixture alone, then the suite while Jibo is idle, then with normal
-listening, eye and face tracking. Stop on service degradation, unbounded queues, abnormal
-temperature or memory pressure.
+Every step after `deploy` runs `preflight.sh --quick` first and stops if it fails. Stage the
+steps: first the fixture alone, then the suite while Jibo is idle, then with normal listening,
+eye and face tracking. Stop on service degradation, unbounded queues, abnormal temperature or
+memory pressure.
 
 ## Not done yet
 
 - **Every physical Jibo measurement**: latency, CPU, peak and combined memory, thermals, effect on
-  the eye/vision/audio services, GL dispatch on the GK20A. Blocked on robot access.
-- The NEON kernels inside the engine. They are bit-identical in the benchmark; wiring them into
-  `needle-core` (a C helper behind an audited ABI, since stable Rust has no ARM32 NEON intrinsics)
-  waits for `robot-run.sh ops` to show they are worth it.
-- The GPU beyond one CQ projection and one Kronecker stage (attention, convolution and Engram
-  state, a complete prefill), which waits for the measured dispatch costs.
-- Task quality: 12 of 20 exact on the fixtures at full depth is not good enough to act on unchecked.
-  Grounding checks, a confidence gate calibrated on held-out robot tasks, and the
-  Decider as a second opinion are application work; none is done here.
-- Integration with Oído (ASR) and the Decider: the runner's Unix socket and outcomes are the
-  interface; no client is written yet.
+  the eye/vision/audio services, GL dispatch on the GK20A, and whether `needle-jibo-neon` is faster.
+  Blocked on robot access; the bundle and steps are ready.
+- The GPU beyond single operations (one CQ projection, one Kronecker stage, the attention core):
+  projections, convolution, RoPE, Engram and the cache on the device, and a complete prefill. That
+  waits for measured dispatch costs on the robot.
+- Intent errors that grounding cannot see (statements with numbers, names taken as cities,
+  negation). An addressed-to-the-robot check or the Decider as a second opinion would sit above
+  the runner; neither is built, and both need real robot requests to measure.
+- Grounding for languages other than English.
+- Integration with Oído (ASR) and the Decider beyond the socket and the client.
