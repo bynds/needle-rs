@@ -30,3 +30,5 @@ PASS armv7-vfpv3-d16 model (full depth, 113-token prompt, 12 decode steps, f32 a
 PASS armv7-vfpv3-d16 model-d4
 PASS armv7-vfpv3-d16 serve-edge (27 responses byte-identical to the x86-64 Rust runner)
 PASS armv7-vfpv3-d16 suite21 (fixtures/requests.jsonl, --debug-text --confidence: 21 responses byte-identical to the x86-64 Rust runner)
+# after the tool-prefix KV cache (c98f21ee582574260cd58ae8601b2fbc40341320), armv7 VFPv3-D16 build:
+PASS armv7-vfpv3-d16 model incl. the prefix path (prefill of 1/63/64/65/56/112 tokens, nd_cache_clone, steps, 12-step continuation; f32 and int8) against Rust's one-prefill trace

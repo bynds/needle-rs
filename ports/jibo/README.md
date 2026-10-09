@@ -155,8 +155,9 @@ both cache precisions. **Measured (x86-64):** on the handoff fixture after a fir
 same catalogue, 97 of 113 prompt tokens are reused and prefill falls from 994 ms to 177 ms.
 **Measured (qemu), relative only:** for the same pair on the ARMv7 C build, prefill falls from
 37.7 s to 6.3 s and the request's wall time from 51.0 s to 20.0 s. On the 21-request suite, 20 of
-21 requests are served from the cache, and every response is identical with the cache on and off,
-in both runners.
+21 requests are served from the cache; on the 195-request suite, 194 of 195. Every response is
+identical with the cache on and off, in both runners, and the two runners agree byte for byte with
+it on (`results/host-reference-c-parity.jsonl`).
 
 The catalogue may use `string` (with `enum`, `maxLength`), `integer` and `number` (with
 `minimum`, `maximum`) and `boolean`, and `required`. Anything else (`pattern`, arrays, nested
