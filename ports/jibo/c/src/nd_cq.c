@@ -248,14 +248,29 @@ static float group_dot_serial(const float *u, const float *x, size_t len) {
   vst1q_f32(lanes, a0);                                                                        \
   vst1q_f32(lanes + 4, a1);
 #else
+/* Scalar: the eight lanes as eight locals, so the compiler keeps them in registers (an array
+ * indexed in a loop measured ~17% slower on ARMv7 VFP), and the LUT entries for one step of eight
+ * read straight into the products. Same products, same lane order: the same bits. */
 #define DOT_GROUP_LANES(P)                                                                     \
-  for (k = 0; k < ND_LANES; k++) lanes[k] = 0.0f;                                              \
-  for (; bi < full; bi += per_iter) {                                                          \
-    float vals[ND_LANES];                                                                      \
-    size_t t;                                                                                  \
-    for (t = 0; t < per_iter; t++)                                                             \
-      for (k = 0; k < (P); k++) vals[t * (P) + k] = lut[gbytes[bi + t] * (P) + k];             \
-    for (k = 0; k < ND_LANES; k++) lanes[k] += vals[k] * gx[bi * (P) + k];                     \
+  {                                                                                            \
+    float l0 = 0.0f, l1 = 0.0f, l2 = 0.0f, l3 = 0.0f, l4 = 0.0f, l5 = 0.0f, l6 = 0.0f, l7 = 0.0f; \
+    for (; bi < full; bi += per_iter) {                                                        \
+      const float *x8 = gx + bi * (P), *e0, *e1;                                               \
+      if ((P) == 4) {                                                                          \
+        e0 = lut + gbytes[bi] * 4;                                                             \
+        e1 = lut + gbytes[bi + 1] * 4;                                                         \
+        l0 += e0[0] * x8[0], l1 += e0[1] * x8[1], l2 += e0[2] * x8[2], l3 += e0[3] * x8[3];    \
+        l4 += e1[0] * x8[4], l5 += e1[1] * x8[5], l6 += e1[2] * x8[6], l7 += e1[3] * x8[7];    \
+      } else {                                                                                 \
+        const float *e2 = lut + gbytes[bi + 2] * 2, *e3 = lut + gbytes[bi + 3] * 2;            \
+        e0 = lut + gbytes[bi] * 2;                                                             \
+        e1 = lut + gbytes[bi + 1] * 2;                                                         \
+        l0 += e0[0] * x8[0], l1 += e0[1] * x8[1], l2 += e1[0] * x8[2], l3 += e1[1] * x8[3];    \
+        l4 += e2[0] * x8[4], l5 += e2[1] * x8[5], l6 += e3[0] * x8[6], l7 += e3[1] * x8[7];    \
+      }                                                                                        \
+    }                                                                                          \
+    lanes[0] = l0, lanes[1] = l1, lanes[2] = l2, lanes[3] = l3;                                \
+    lanes[4] = l4, lanes[5] = l5, lanes[6] = l6, lanes[7] = l7;                                \
   }
 #endif
 
