@@ -10,7 +10,9 @@ use needle_core::v3::{V3Cache, V3Model};
 
 use crate::cact::CactV3;
 use crate::constrained::{byte_table, ConstrainedDecoder, ToolDef};
-use crate::prompt::{build_prompt, IM_END, THINK_END, THINK_START, TOOL_CALL_END, TOOL_CALL_START};
+use crate::prompt::{
+    build_prompt, IM_END, THINK_END, THINK_START, TOOLS_END, TOOL_CALL_END, TOOL_CALL_START,
+};
 use crate::sp_tokenizer::SpTokenizer;
 use crate::v3::{
     confidence_head, confidence_head_at_depth, config_from_geometry, model_from_cact,
@@ -104,7 +106,17 @@ pub struct V3Result {
     pub prompt_truncated: bool,
     /// Prompt length in tokens, BOS included, before any truncation.
     pub prompt_tokens: usize,
+    /// Prompt tokens whose cache state came from the tool-prefix cache instead of being
+    /// computed (0 without it, and on a miss). See [`V3Engine::enable_prefix_cache`].
+    pub prefix_reused: usize,
     pub timing: V3Timing,
+}
+
+/// The cache state after a prompt's tool prefix, kept for the next request with the same prefix.
+struct PrefixEntry {
+    ids: Vec<u32>,
+    precision: KvPrecision,
+    cache: V3Cache,
 }
 
 /// A loaded Needle 3 model with its tokenizer.
@@ -117,6 +129,9 @@ pub struct V3Engine {
     eos_id: u32,
     bos_id: u32,
     im_end_id: Option<u32>,
+    tools_end_id: Option<u32>,
+    /// `Some` once [`Self::enable_prefix_cache`] is called: the most recent tool prefix.
+    prefix: Option<std::sync::Mutex<Option<PrefixEntry>>>,
 }
 
 impl V3Engine {
@@ -176,6 +191,7 @@ impl V3Engine {
         let blob = cact.tokenizer_blob().ok_or(V3EngineError::NoTokenizer)?;
         let tokenizer = SpTokenizer::from_blob(blob).map_err(|_| V3EngineError::BadTokenizer)?;
         let im_end_id = tokenizer.id_of(IM_END);
+        let tokenizer_tools_end = tokenizer.id_of(TOOLS_END);
         // The head is sliced against the *container's* depth, so it is derived
         // from the parent config rather than the model's own.
         let confidence = match depth {
@@ -194,6 +210,8 @@ impl V3Engine {
             eos_id: 1,
             bos_id: 2,
             im_end_id,
+            tools_end_id: tokenizer_tools_end,
+            prefix: None,
         })
     }
 
@@ -219,6 +237,56 @@ impl V3Engine {
         F: FnMut(u32, &str),
     {
         self.generate_controlled(query, tools_json, opts, on_token, || true)
+    }
+
+    /// Keep the cache state after the prompt's tool prefix and reuse it for the next request that
+    /// starts with the same tokens.
+    ///
+    /// The prefix is everything up to and including `</tools>`: BOS, the system turn if any, and
+    /// the catalogue. It does not depend on the query, and on a small catalogue it is most of the
+    /// prompt. A request whose ids start with the stored prefix (same catalogue, system message
+    /// and cache precision) starts from a copy of that state and steps only its own tokens; any
+    /// other request computes its prefix and replaces the stored one. One entry is kept.
+    ///
+    /// The results are bit-identical with and without it: a prefill of the prefix followed by
+    /// decode steps over the rest leaves the same cache and the same logits as one prefill of
+    /// the whole prompt (`tests/v3_prefix_cache.rs`).
+    pub fn enable_prefix_cache(&mut self) {
+        self.prefix = Some(std::sync::Mutex::new(None));
+    }
+
+    pub fn prefix_cache_enabled(&self) -> bool {
+        self.prefix.is_some()
+    }
+
+    /// Where the reusable prefix ends in `ids`: just after the first `</tools>`, when something
+    /// follows it.
+    fn prefix_len(&self, ids: &[u32]) -> Option<usize> {
+        let end = self.tools_end_id?;
+        let at = ids.iter().position(|&t| t == end)? + 1;
+        (at < ids.len()).then_some(at)
+    }
+
+    /// The cache after `prefix`, from the stored entry when it matches (returning how many tokens
+    /// that saved), else computed and stored.
+    fn prefix_state(&self, prefix: &[u32], precision: KvPrecision) -> (V3Cache, usize) {
+        let slot = self.prefix.as_ref().expect("prefix cache enabled");
+        let mut entry = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(e) = entry.as_ref() {
+            if e.precision == precision && e.ids == prefix {
+                return (e.cache.clone(), prefix.len());
+            }
+        }
+        // Sized to the prefix: the stored entry and each copy stay small, and a request's copy
+        // grows as it goes (growth never reorders what is stored).
+        let mut cache = V3Cache::with_precision(&self.model.cfg, prefix.len(), precision);
+        self.model.prefill(prefix, &mut cache);
+        *entry = Some(PrefixEntry {
+            ids: prefix.to_vec(),
+            precision,
+            cache: cache.clone(),
+        });
+        (cache, 0)
     }
 
     /// The token ids generation would prefill for this request, BOS included.
@@ -267,19 +335,40 @@ impl V3Engine {
         }
 
         let budget = max.saturating_sub(ids.len()).min(opts.max_new_tokens);
-        let mut cache =
-            V3Cache::with_precision(&self.model.cfg, ids.len() + budget, opts.kv_precision);
 
         // Prefill the whole prompt in one batched pass, then continue from the
         // cache it fills. Stepping the prompt through `decode_step` costs a
         // full weight sweep per position; this pays it once per chunk, and the
         // result is bit-identical — `batched_prefill_leaves_the_cache_where_
         // stepping_would` asserts the continuation, not just the logits.
+        //
+        // With the prefix cache, the tool prefix comes from (or goes into) the stored entry and
+        // the rest of the prompt is stepped: the same cache, the same logits.
         let t1 = Stopwatch::start();
-        let mut logits = if ids.is_empty() {
-            Vec::new()
+        let hint = ids.len() + budget;
+        let split = if self.prefix.is_some() {
+            self.prefix_len(&ids)
         } else {
-            self.model.prefill(&ids, &mut cache)
+            None
+        };
+        let (mut cache, mut logits, prefix_reused) = match split {
+            Some(l) => {
+                let (mut cache, reused) = self.prefix_state(&ids[..l], opts.kv_precision);
+                let mut logits = Vec::new();
+                for &t in &ids[l..] {
+                    logits = self.model.decode_step(&mut cache, t);
+                }
+                (cache, logits, reused)
+            }
+            None => {
+                let mut cache = V3Cache::with_precision(&self.model.cfg, hint, opts.kv_precision);
+                let logits = if ids.is_empty() {
+                    Vec::new()
+                } else {
+                    self.model.prefill(&ids, &mut cache)
+                };
+                (cache, logits, 0)
+            }
         };
         timing.prefill = t1.elapsed();
         let t2 = Stopwatch::start();
@@ -383,6 +472,7 @@ impl V3Engine {
             positions: cache.pos(),
             prompt_truncated,
             prompt_tokens,
+            prefix_reused,
             timing,
         }
     }

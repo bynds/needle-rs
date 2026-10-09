@@ -33,6 +33,7 @@ typedef struct {
   const char *system;
   int confidence, debug_text;
   nd_grounding_mode grounding;
+  int no_prefix_cache; /* recompute the tool prefix on every request (same bits) */
   int verify_model;
   const char *expect_sha256;
   int has_min_confidence;

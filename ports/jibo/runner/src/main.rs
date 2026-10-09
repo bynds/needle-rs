@@ -32,6 +32,7 @@ options:
   --layers N            ladder rung (2..num_layers); default: the container's full depth
   --constrain           restrict names and argument keys inside <tool_call> (values are not)
   --kv-int8             int8 KV cache (not bit-identical to f32)
+  --no-prefix-cache     recompute the tool prefix on every request (same results, slower)
   --system TEXT         system message
   --confidence          score candidates with the confidence head (uncalibrated, timed)
   --debug-text          include the raw completion in responses
@@ -114,6 +115,7 @@ fn parse_args() -> Result<Args, String> {
             "--layers" => a.layers = Some(num(val("--layers")?, "--layers")?),
             "--constrain" => a.opts.constrain = true,
             "--kv-int8" => a.opts.kv_int8 = true,
+            "--no-prefix-cache" => a.opts.no_prefix_cache = true,
             "--system" => a.opts.system = Some(val("--system")?),
             "--confidence" => a.opts.confidence = true,
             "--debug-text" => a.opts.debug_text = true,

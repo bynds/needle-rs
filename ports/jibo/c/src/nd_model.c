@@ -515,6 +515,53 @@ fail:
   return NULL;
 }
 
+static void *dup_bytes(const void *src, size_t n) {
+  void *d = malloc(n ? n : 1);
+  if (d && n) memcpy(d, src, n);
+  return d;
+}
+
+nd_cache *nd_cache_clone(const nd_cache *src) {
+  const nd_cfg *cfg = &src->cfg;
+  size_t kd = cfg->num_kv_heads * cfg->qk_head_dim, vd = cfg->num_kv_heads * cfg->v_head_dim;
+  size_t qd = cfg->num_heads * cfg->qk_head_dim, tail = cfg->qkv_conv_taps ? cfg->qkv_conv_taps - 1 : 0;
+  size_t reach = (cfg->conv_taps ? cfg->conv_taps - 1 : 0) * cfg->conv_dilation, li, s;
+  nd_cache *c = calloc(1, sizeof *c);
+  if (!c) return NULL;
+  *c = *src;
+  c->layers = nd_calloc(cfg->num_layers, sizeof(layer_cache));
+  c->engram_tail = nd_calloc(cfg->n_sites, sizeof(float *));
+  if (!c->layers || !c->engram_tail) goto fail;
+  for (li = 0; li < cfg->num_layers; li++) {
+    const layer_cache *a = &src->layers[li];
+    layer_cache *b = &c->layers[li];
+    size_t heads = a->slots * cfg->num_kv_heads;
+    b->slots = a->slots;
+    b->cap = a->cap;
+    if (src->prec == ND_KV_INT8) {
+      b->kq = dup_bytes(a->kq, a->slots * kd);
+      b->vq = dup_bytes(a->vq, a->slots * vd);
+      b->ks = dup_bytes(a->ks, heads * sizeof(float));
+      b->vs = dup_bytes(a->vs, heads * sizeof(float));
+      if (!b->kq || !b->vq || !b->ks || !b->vs) goto fail;
+    } else {
+      b->k = dup_bytes(a->k, a->slots * kd * sizeof(float));
+      b->v = dup_bytes(a->v, a->slots * vd * sizeof(float));
+      if (!b->k || !b->v) goto fail;
+    }
+    b->q_tail = dup_bytes(a->q_tail, tail * qd * sizeof(float));
+    b->k_tail = dup_bytes(a->k_tail, tail * kd * sizeof(float));
+    b->v_tail = dup_bytes(a->v_tail, tail * vd * sizeof(float));
+    if (!b->q_tail || !b->k_tail || !b->v_tail) goto fail;
+  }
+  for (s = 0; s < cfg->n_sites; s++)
+    if (!(c->engram_tail[s] = dup_bytes(src->engram_tail[s], reach * cfg->d_model * sizeof(float)))) goto fail;
+  return c;
+fail:
+  nd_cache_free(c);
+  return NULL;
+}
+
 size_t nd_cache_pos(const nd_cache *c) { return c->pos; }
 
 static void push_token(nd_cache *c, uint32_t tok) {

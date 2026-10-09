@@ -77,6 +77,7 @@ int nd_engine_from_bytes(uint8_t *raw, size_t len, size_t depth, nd_engine **out
   g->im_end_id = nd_tok_id_of(g->tok, ND_IM_END);
   g->tc_start_id = nd_tok_id_of(g->tok, ND_TOOL_CALL_START);
   g->tc_end_id = nd_tok_id_of(g->tok, ND_TOOL_CALL_END);
+  g->tools_end_id = nd_tok_id_of(g->tok, ND_TOOLS_END);
   *out = g;
   return ND_OK;
 fail:
@@ -112,6 +113,8 @@ void nd_engine_free(nd_engine *g) {
   if (!g) return;
   free(g->byte_table);
   free(g->mask);
+  free(g->prefix_ids);
+  nd_cache_free(g->prefix_cache);
   nd_tok_free(g->tok);
   nd_model_free(g->model);
   nd_cact_free(&g->cact);
@@ -173,6 +176,67 @@ static int ensure_byte_table(nd_engine *g) {
   return rc;
 }
 
+/* ---- the tool-prefix cache ---- */
+
+void nd_engine_enable_prefix_cache(nd_engine *g) { g->prefix_on = 1; }
+
+/* Where the reusable prefix ends: just after the first `</tools>`, when something follows. */
+static size_t prefix_len(const nd_engine *g, const uint32_t *ids, size_t n) {
+  size_t i;
+  if (g->tools_end_id < 0) return 0;
+  for (i = 0; i < n; i++)
+    if (ids[i] == (uint32_t)g->tools_end_id) return i + 1 < n ? i + 1 : 0;
+  return 0;
+}
+
+/* The cache after ids[0..l): a copy of the stored entry when it matches (*reused = l), else
+ * computed and stored (*reused = 0). */
+static int prefix_state(nd_engine *g, const uint32_t *ids, size_t l, nd_kv_precision kv, nd_cache **out,
+                        size_t *reused) {
+  const nd_cfg *cfg = &g->model->cfg;
+  float *scratch;
+  nd_cache *c;
+  uint32_t *keep;
+  int rc;
+  *out = NULL;
+  *reused = 0;
+  if (g->prefix_cache && g->prefix_kv == kv && g->prefix_n == l && !memcmp(g->prefix_ids, ids, l * sizeof *ids)) {
+    if (!(*out = nd_cache_clone(g->prefix_cache))) return ND_E_NOMEM;
+    *reused = l;
+    return ND_OK;
+  }
+  /* Sized to the prefix, so the stored entry and each copy stay small; copies grow as they go. */
+  if (!(c = nd_cache_new(cfg, l, kv))) return ND_E_NOMEM;
+  if (!(scratch = malloc(nd_logit_rows(cfg) * sizeof *scratch))) {
+    nd_cache_free(c);
+    return ND_E_NOMEM;
+  }
+  rc = nd_prefill(g->model, ids, l, c, scratch);
+  free(scratch);
+  if (rc != ND_OK) {
+    nd_cache_free(c);
+    return rc;
+  }
+  /* Store a copy; if that fails, the request still proceeds without storing. */
+  keep = malloc(l * sizeof *keep);
+  if (keep) {
+    nd_cache *snap = nd_cache_clone(c);
+    if (snap) {
+      memcpy(keep, ids, l * sizeof *ids);
+      free(g->prefix_ids);
+      nd_cache_free(g->prefix_cache);
+      g->prefix_ids = keep;
+      g->prefix_n = l;
+      g->prefix_kv = kv;
+      g->prefix_cache = snap;
+    } else {
+      free(keep);
+    }
+  }
+  *out = c;
+  return ND_OK;
+}
+
 /* ---- sampling ---- */
 
 static uint32_t argmax(const float *l, size_t n) {
@@ -225,7 +289,7 @@ static size_t stream_delta(const char *full, size_t flen, const char *emitted, s
 int nd_generate(nd_engine *g, const char *query, const char *tools_json, const nd_gen_opts *o,
                 nd_on_token on_token, nd_keep_going keep_going, void *user, nd_result *r) {
   const nd_cfg *cfg = &g->model->cfg;
-  size_t rows = nd_logit_rows(cfg), max = cfg->max_seq_len, budget, step, nids = 0, elen = 0;
+  size_t rows = nd_logit_rows(cfg), max = cfg->max_seq_len, budget, step, nids = 0, elen = 0, split;
   uint32_t *ids = NULL;
   float *logits = NULL;
   nd_cache *cache = NULL;
@@ -251,7 +315,7 @@ int nd_generate(nd_engine *g, const char *query, const char *tools_json, const n
   if (budget > o->max_new_tokens) budget = o->max_new_tokens;
 
   if (!(r->tokens = malloc((budget ? budget : 1) * sizeof *r->tokens)) || !(logits = malloc(rows * sizeof *logits)) ||
-      !(emitted = calloc(1, 1)) || !(cache = nd_cache_new(cfg, nids + budget, o->kv))) {
+      !(emitted = calloc(1, 1))) {
     rc = ND_E_NOMEM;
     goto done;
   }
@@ -269,8 +333,22 @@ int nd_generate(nd_engine *g, const char *query, const char *tools_json, const n
     if (rc != ND_OK) goto done;
   }
 
+  /* With the prefix cache, the tool prefix comes from (or goes into) the stored entry and the
+   * rest of the prompt is stepped: the same cache and logits as one prefill. */
   t1 = now_s();
-  if (nids && (rc = nd_prefill(g->model, ids, nids, cache, logits)) != ND_OK) goto done;
+  split = g->prefix_on ? prefix_len(g, ids, nids) : 0;
+  if (split) {
+    size_t i;
+    if ((rc = prefix_state(g, ids, split, o->kv, &cache, &r->prefix_reused)) != ND_OK) goto done;
+    for (i = split; i < nids; i++)
+      if ((rc = nd_decode_step(g->model, cache, ids[i], logits)) != ND_OK) goto done;
+  } else {
+    if (!(cache = nd_cache_new(cfg, nids + budget, o->kv))) {
+      rc = ND_E_NOMEM;
+      goto done;
+    }
+    if (nids && (rc = nd_prefill(g->model, ids, nids, cache, logits)) != ND_OK) goto done;
+  }
   r->t_prefill = now_s() - t1;
   t2 = now_s();
 

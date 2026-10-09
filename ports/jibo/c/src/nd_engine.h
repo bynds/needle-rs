@@ -44,6 +44,7 @@ typedef struct {
   size_t positions;
   int prompt_truncated;
   size_t prompt_tokens;
+  size_t prefix_reused; /* prompt tokens taken from the tool-prefix cache (0 without it, or a miss) */
   double t_tokenize, t_prefill, t_decode; /* seconds, CLOCK_MONOTONIC */
 } nd_result;
 
@@ -55,7 +56,14 @@ typedef struct {
   nd_model *model;
   nd_tok *tok;
   uint32_t eos_id, bos_id;
-  int32_t im_end_id, tc_start_id, tc_end_id;
+  int32_t im_end_id, tc_start_id, tc_end_id, tools_end_id;
+  /* The tool-prefix cache (nd_engine_enable_prefix_cache): the most recent prefix's ids, the
+   * precision it was computed at, and the cache state after it. */
+  int prefix_on;
+  uint32_t *prefix_ids;
+  size_t prefix_n;
+  nd_kv_precision prefix_kv;
+  nd_cache *prefix_cache;
   /* The grammar's token byte table (constrained::byte_table), built on first constrained use. */
   nd_token_bytes *byte_table;
   size_t n_byte_table;
@@ -67,6 +75,13 @@ typedef struct {
 int nd_engine_from_bytes(uint8_t *raw, size_t len, size_t depth, nd_engine **out, nd_err *e);
 int nd_engine_load(const char *path, size_t depth, nd_engine **out, nd_err *e);
 void nd_engine_free(nd_engine *g);
+
+/* Keep the cache state after the prompt's tool prefix (everything through the first `</tools>`:
+ * BOS, the system turn, the catalogue) and start later requests with the same prefix, cache
+ * precision included, from a copy of it, stepping only their own tokens. One entry is kept.
+ * Bit-identical with and without (V3Engine::enable_prefix_cache). Not thread-safe: one engine
+ * serves one request at a time. */
+void nd_engine_enable_prefix_cache(nd_engine *g);
 
 /* The ids generation would prefill, BOS included. *ids malloc'd. */
 int nd_engine_prompt_ids(const nd_engine *g, const char *query, const char *tools_json, const char *system,

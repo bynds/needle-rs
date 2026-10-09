@@ -510,6 +510,7 @@ nd_service *nd_service_load(const char *path, nd_catalogue *cat, int has_depth, 
     goto fail;
   }
   bytes = NULL;
+  if (!o->no_prefix_cache) nd_engine_enable_prefix_cache(s->engine);
   s->depth = s->engine->model->cfg.num_layers;
   if (l->max_total_tokens > s->engine->model->cfg.max_seq_len) {
     *err = xprintf("max_total_tokens %zu exceeds the model's context %zu", l->max_total_tokens,
@@ -554,6 +555,7 @@ void nd_service_health(const nd_service *s, nd_obj *o) {
   nd_obj_u64(o, "max_seq_len", c->max_seq_len);
   nd_obj_cstr(o, "kv_precision", nd_service_kv_name(s));
   nd_obj_bool(o, "constrained", s->opts.constrain);
+  nd_obj_bool(o, "prefix_cache", s->engine->prefix_on);
   nd_obj_cstr(o, "grounding", nd_grounding_name(s->opts.grounding));
   if (s->opts.has_min_confidence)
     nd_obj_f64(o, "min_confidence", (double)s->opts.min_confidence);
@@ -750,6 +752,7 @@ void nd_service_handle(nd_service *s, const nd_request *r, double received, nd_o
     nd_obj_u64(&tok, "generated", res.ntokens);
     nd_obj_u64(&tok, "budget", budget);
     nd_obj_u64(&tok, "positions", res.positions);
+    nd_obj_u64(&tok, "prefix_reused", res.prefix_reused);
     nd_obj_child(out, "tokens", &tok);
     nd_obj_init(&tim);
     nd_obj_f64(&tim, "queue_ms", nd_ms(queue));

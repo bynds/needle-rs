@@ -56,6 +56,9 @@ pub struct Options {
     /// Refuse to start unless the model's sha256 is this (lowercase hex). Always compared
     /// against a freshly computed hash, never the sidecar.
     pub expect_sha256: Option<String>,
+    /// Recompute the tool prefix on every request instead of reusing the engine's cached state
+    /// for it (`V3Engine::enable_prefix_cache`). Results are the same bits either way.
+    pub no_prefix_cache: bool,
     /// Candidates whose confidence-head score is below this become `low_confidence`. Needs
     /// `confidence`. Uncalibrated: tune on the dev split, report on the held-out one.
     pub min_confidence: Option<f32>,
@@ -381,11 +384,14 @@ impl Service {
             }
         }
         let model_bytes = bytes.len();
-        let engine = match depth {
+        let mut engine = match depth {
             None => V3Engine::from_bytes(bytes),
             Some(d) => V3Engine::from_bytes_with_depth(bytes, d),
         }
         .map_err(|e| format!("{}: {e}", path.display()))?;
+        if !opts.no_prefix_cache {
+            engine.enable_prefix_cache();
+        }
         let depth = engine.model.cfg.num_layers;
         if limits.max_total_tokens > engine.model.cfg.max_seq_len {
             return Err(format!(
@@ -431,6 +437,7 @@ impl Service {
             "max_seq_len": c.max_seq_len,
             "kv_precision": self.kv_name(),
             "constrained": self.opts.constrain,
+            "prefix_cache": self.engine.prefix_cache_enabled(),
             "grounding": format!("{:?}", self.opts.grounding).to_lowercase(),
             "min_confidence": self.opts.min_confidence,
             "confidence_head": self.engine.confidence.is_some(),
@@ -570,6 +577,8 @@ impl Service {
                 "generated": res.tokens.len(),
                 "budget": budget,
                 "positions": res.positions,
+                // Prompt tokens taken from the tool-prefix cache rather than computed.
+                "prefix_reused": res.prefix_reused,
             },
             "timing": {
                 "queue_ms": ms(queue),

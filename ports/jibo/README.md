@@ -120,7 +120,7 @@ reports it):
  "depth":20,"kv_precision":"f32","constrained":false,
  "prompt_truncated":false,"stop_reason":"im_end","schema_valid":true,"grounded":true,
  "confidence_raw":null,
- "tokens":{"prompt":201,"generated":29,"budget":256,"positions":230},
+ "tokens":{"prompt":201,"generated":29,"budget":256,"positions":230,"prefix_reused":0},
  "timing":{"queue_ms":0.0,"wall_ms":2846.094,"tokenize_ms":4.26,"prefill_ms":2328.113,
            "decode_ms":508.621,"first_token_ms":2337.454,"confidence_ms":null}}
 ```
@@ -140,6 +140,23 @@ reports it):
 | `timeout` | The deadline passed while queued or between tokens (a prefill in flight completes first). |
 | `busy` | Queue full, `MemAvailable` below `--min-avail-mb`, or the thermal zone above `--max-temp-c`. |
 | `invalid_request` | The request line is malformed, names an unknown key or tool, or exceeds a bound. |
+
+**Tool-prefix cache** (on by default; `--no-prefix-cache` turns it off). Everything up to and
+including `</tools>` (BOS, the system turn, the catalogue) is the same for every request with the
+same tool set, and on a small catalogue it is most of the prompt. The runner keeps the KV cache
+state after that prefix. A request with the same prefix and cache precision starts from a copy
+and steps only its own tokens; any other request computes its prefix and replaces the stored one.
+One entry is kept, and `tokens.prefix_reused` reports how many prompt tokens came from it.
+
+The results are bit-identical with and without the cache. One prefill of the prefix followed by
+decode steps over the rest leaves the same cache and logits as one prefill of the whole prompt.
+`crates/needle-infer/tests/v3_prefix_cache.rs` and the C port's `test_model` hold it to that for
+both cache precisions. **Measured (x86-64):** on the handoff fixture after a first request with the
+same catalogue, 97 of 113 prompt tokens are reused and prefill falls from 994 ms to 177 ms.
+**Measured (qemu), relative only:** for the same pair on the ARMv7 C build, prefill falls from
+37.7 s to 6.3 s and the request's wall time from 51.0 s to 20.0 s. On the 21-request suite, 20 of
+21 requests are served from the cache, and every response is identical with the cache on and off,
+in both runners.
 
 The catalogue may use `string` (with `enum`, `maxLength`), `integer` and `number` (with
 `minimum`, `maximum`) and `boolean`, and `required`. Anything else (`pattern`, arrays, nested
@@ -309,6 +326,10 @@ On this branch, each its own commit with a regression test:
 - `needle-infer` loader: `CactV3Geometry::check_bounds` (fields and u64 products, before anything
   is sized), tokenizer piece count bounded by its blob, zero Engram tables rejected.
 - `needle-core`: `CqWeight::from_blob` checks its size arithmetic and enforces `MAX_GROUP`.
+- `needle-infer`: `V3Engine::enable_prefix_cache` keeps the cache state after the prompt's tool
+  prefix and starts later requests with the same prefix from a copy (`V3Cache` is now `Clone`);
+  `V3Result::prefix_reused`. Bit-identical results (`tests/v3_prefix_cache.rs`). The runner turns
+  it on unless `--no-prefix-cache`.
 - `needle-core`: `V3Model::new` checks every decoded vector against the length the forward pass
   indexes it at, and the geometry against what it can run. Before this, 24 of the robustness
   test's corruptions loaded and then aborted at the first request (one through a 17 GB

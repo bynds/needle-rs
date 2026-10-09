@@ -75,6 +75,11 @@ with Jibo's 2.21. Its shared libraries are `libm.so.6`, `libpthread.so.0`, `libc
 `needle-jibo-c` takes the Rust runner's options and writes its JSON. See `../README.md` for the
 protocol and the client. `dump-op` stays in the Rust runner.
 
+The tool-prefix KV cache is on by default here too: `nd_engine_enable_prefix_cache`,
+`nd_cache_clone`, and `--no-prefix-cache` to turn it off. It keeps the same single entry, follows
+the same hit rule and reports the same `tokens.prefix_reused` as the Rust runner. Its path through
+the model, a prefix prefill, a copy, then steps, is gate 7.
+
 ```sh
 build/needle-jibo-c run   weights/needle3.cact --tools fixtures/tools.json --query "set a timer for ten minutes"
 build/needle-jibo-c serve weights/needle3.cact --tools fixtures/tools.json --socket /tmp/needle.sock
@@ -118,7 +123,7 @@ exhaustive corpora.
 | 4 | grammar | `ref/grammar_ref` | 257,846 masks over 6,494 scenarios | 0 | 0 |
 | 5 | runner modules | `ref/runner_ref` | 54,172 records (catalogues, validation, grounding, serde text) | 0 | 0, against an armv7 reference |
 | 6 | CQ kernels | `needle-jibo dump-op` | q_proj, out_proj, embedding (8192×768), 16 tokens | 0 differing floats | 0 |
-| 7 | model | `runner/examples/trace.rs` | a 113-token prompt: cells, all-position logits, prefill, 12 decode steps with f32 and int8 caches, confidence head; ladder depths 4 and 13 | 0 differing floats | 0, both plain and NEON |
+| 7 | model | `runner/examples/trace.rs` | a 113-token prompt: cells, all-position logits, prefill, 12 decode steps with f32 and int8 caches, confidence head; the tool-prefix path (prefill of 1, 63, 64, 65, 56 or 112 tokens, `nd_cache_clone`, steps, the same 12 decode steps) against Rust's one-prefill logits, for both caches; ladder depths 4 and 13 | 0 differing floats | 0, both plain and NEON |
 | 8 | corruption | `runner/examples/corrupt_cases.rs` | 1,512 single-field corruptions | same verdict on every case, no crash | — |
 
 The "0" entries are counts of differing bits. They are not tolerances, and gate 7 compares float

@@ -122,6 +122,7 @@ pub fn quantize_rows(x: &[f32], head_dim: usize) -> (Vec<i8>, Vec<f32>) {
 }
 
 /// Per-layer key/value storage.
+#[derive(Clone)]
 struct LayerCache {
     /// Populated when the precision is `F32`; empty otherwise.
     k: Vec<f32>,
@@ -145,6 +146,10 @@ struct LayerCache {
 }
 
 /// Decode state for one session.
+///
+/// `Clone` is a snapshot: a clone continues exactly as the original would, which is what lets
+/// an engine keep the state after a shared prompt prefix and start each request from a copy.
+#[derive(Clone)]
 pub struct V3Cache {
     cfg: V3Config,
     precision: KvPrecision,

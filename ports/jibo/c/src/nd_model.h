@@ -76,6 +76,8 @@ typedef enum { ND_KV_F32 = 0, ND_KV_INT8 = 1 } nd_kv_precision;
 typedef struct nd_cache nd_cache;
 nd_cache *nd_cache_new(const nd_cfg *cfg, size_t hint, nd_kv_precision p);
 void nd_cache_free(nd_cache *c);
+/* A deep copy that continues exactly as the original would (the tool-prefix cache's snapshot). */
+nd_cache *nd_cache_clone(const nd_cache *c);
 size_t nd_cache_pos(const nd_cache *c);
 
 /* Batched prefill filling `cache`; writes the last position's logits (nd_logit_rows floats).

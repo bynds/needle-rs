@@ -36,6 +36,7 @@ static const char USAGE[] =
     "  --layers N            ladder rung (2..num_layers); default: the container's full depth\n"
     "  --constrain           restrict names and argument keys inside <tool_call> (values are not)\n"
     "  --kv-int8             int8 KV cache (not bit-identical to f32)\n"
+    "  --no-prefix-cache     recompute the tool prefix on every request (same results, slower)\n"
     "  --system TEXT         system message\n"
     "  --confidence          score candidates with the confidence head (uncalibrated, timed)\n"
     "  --debug-text          include the raw completion in responses\n"
@@ -123,6 +124,7 @@ static void parse_args(int argc, char **argv, args *a) {
     else if (!strcmp(k, "--layers")) a->has_layers = 1, a->layers = num(VAL(), "--layers");
     else if (!strcmp(k, "--constrain")) a->opts.constrain = 1;
     else if (!strcmp(k, "--kv-int8")) a->opts.kv_int8 = 1;
+    else if (!strcmp(k, "--no-prefix-cache")) a->opts.no_prefix_cache = 1;
     else if (!strcmp(k, "--system")) a->opts.system = VAL();
     else if (!strcmp(k, "--confidence")) a->opts.confidence = 1;
     else if (!strcmp(k, "--debug-text")) a->opts.debug_text = 1;

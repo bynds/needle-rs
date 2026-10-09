@@ -122,6 +122,38 @@ int main(int argc, char **argv) {
       if (nd_decode_step(m, cache, fed[i], got + (i + 1) * rows)) return 1;
     ok &= check("decode_i8", got, d8, (steps + 1) * rows, rows);
     nd_cache_free(cache);
+
+    /* The tool-prefix cache's path: a prefill of ids[0..split) into a cache sized to it, a copy
+     * (nd_cache_clone, as the engine stores and restores it), then decode steps over the rest and
+     * the same continuation. It must land on Rust's one-prefill logits and decode steps. */
+    {
+      size_t splits[6], ns, k, prec;
+      char name[32];
+      splits[0] = 1, splits[1] = 63, splits[2] = 64, splits[3] = 65, splits[4] = seq / 2, splits[5] = seq - 1;
+      for (prec = 0; prec < 2; prec++)
+        for (k = 0; k < 6; k++) {
+          size_t split = splits[k];
+          nd_cache *part, *copy;
+          float *ref = prec ? d8 : NULL;
+          if (split == 0 || split >= seq) continue;
+          part = nd_cache_new(&m->cfg, split, prec ? ND_KV_INT8 : ND_KV_F32);
+          if (!part || nd_prefill(m, ids, split, part, got)) return 1;
+          copy = nd_cache_clone(part);
+          nd_cache_free(part);
+          if (!copy) return 1;
+          for (i = split; i < seq; i++)
+            if (nd_decode_step(m, copy, ids[i], got)) return 1;
+          for (ns = 0; ns < steps; ns++)
+            if (nd_decode_step(m, copy, fed[ns], got + (ns + 1) * rows)) return 1;
+          snprintf(name, sizeof name, "prefix%zu%s", split, prec ? "_i8" : "");
+          if (prec) {
+            ok &= check(name, got, ref, (steps + 1) * rows, rows);
+          } else {
+            ok &= check(name, got, pre, rows, rows) & check(name, got + rows, dec, steps * rows, rows);
+          }
+          nd_cache_free(copy);
+        }
+    }
     free(pre), free(dec), free(d8), free(got);
   }
 
