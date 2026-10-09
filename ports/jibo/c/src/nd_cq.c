@@ -37,6 +37,32 @@ static void neon_lanes8(const float *u, const float *x, size_t n, float out[8]) 
       : "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27", "cc", "memory");
 }
 
+/* neon_lanes8 for two inputs against the same u (needle-core's lanes8x2): u is loaded once for
+ * both positions, each position's lanes and order exactly as neon_lanes8 gives them. */
+static void neon_lanes8x2(const float *u, const float *x0, const float *x1, size_t n, float out0[8], float out1[8]) {
+  __asm__ __volatile__(
+      "vmov.i32 q12, #0\n\t"
+      "vmov.i32 q13, #0\n\t"
+      "vmov.i32 q14, #0\n\t"
+      "vmov.i32 q15, #0\n\t"
+      "1:\n\t"
+      "vld1.32 {d16-d19}, [%[u]]!\n\t"
+      "vld1.32 {d20-d23}, [%[x0]]!\n\t"
+      "vld1.32 {d0-d3}, [%[x1]]!\n\t"
+      "vmla.f32 q12, q8, q10\n\t"
+      "vmla.f32 q13, q9, q11\n\t"
+      "vmla.f32 q14, q8, q0\n\t"
+      "vmla.f32 q15, q9, q1\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      "vst1.32 {d24-d27}, [%[o0]]\n\t"
+      "vst1.32 {d28-d31}, [%[o1]]\n\t"
+      : [u] "+r"(u), [x0] "+r"(x0), [x1] "+r"(x1), [n] "+r"(n)
+      : [o0] "r"(out0), [o1] "r"(out1)
+      : "d0", "d1", "d2", "d3", "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27",
+        "d28", "d29", "d30", "d31", "cc", "memory");
+}
+
 static void neon_lut4_lanes(const float *lut, const uint8_t *g, const float *x, size_t pairs, float out[8]) {
   uint32_t t0, t1;
   __asm__ __volatile__(
@@ -443,6 +469,34 @@ static float group_dot_lanes(const float *u, const float *x, size_t len) {
   return sum_lanes(lanes);
 }
 
+/* group_dot_lanes for two inputs against the same u, each exactly as group_dot_lanes computes
+ * it; u is read once for both. */
+static void group_dot_lanes2(const float *u, const float *x0, const float *x1, size_t len, float *s0, float *s1) {
+  size_t chunks = len / ND_LANES, c;
+  float l0[ND_LANES], l1[ND_LANES];
+#if ND_NEON_ASM
+  if (chunks) {
+    neon_lanes8x2(u, x0, x1, chunks, l0, l1);
+  } else {
+    for (c = 0; c < ND_LANES; c++) l0[c] = l1[c] = 0.0f;
+  }
+#else
+  float a0 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, a4 = 0.0f, a5 = 0.0f, a6 = 0.0f, a7 = 0.0f;
+  float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f, b3 = 0.0f, b4 = 0.0f, b5 = 0.0f, b6 = 0.0f, b7 = 0.0f;
+  for (c = 0; c < chunks; c++) {
+    const float *uu = u + c * 8, *p = x0 + c * 8, *q = x1 + c * 8;
+    a0 += uu[0] * p[0], a1 += uu[1] * p[1], a2 += uu[2] * p[2], a3 += uu[3] * p[3];
+    a4 += uu[4] * p[4], a5 += uu[5] * p[5], a6 += uu[6] * p[6], a7 += uu[7] * p[7];
+    b0 += uu[0] * q[0], b1 += uu[1] * q[1], b2 += uu[2] * q[2], b3 += uu[3] * q[3];
+    b4 += uu[4] * q[4], b5 += uu[5] * q[5], b6 += uu[6] * q[6], b7 += uu[7] * q[7];
+  }
+  l0[0] = a0, l0[1] = a1, l0[2] = a2, l0[3] = a3, l0[4] = a4, l0[5] = a5, l0[6] = a6, l0[7] = a7;
+  l1[0] = b0, l1[1] = b1, l1[2] = b2, l1[3] = b3, l1[4] = b4, l1[5] = b5, l1[6] = b6, l1[7] = b7;
+#endif
+  *s0 = sum_lanes(l0);
+  *s1 = sum_lanes(l1);
+}
+
 static float group_dot_serial(const float *u, const float *x, size_t len) {
   float s = 0.0f;
   size_t i;
@@ -581,7 +635,17 @@ void nd_cq_matmul_rows_prepared(const nd_cq *w, const float *xh, size_t batch, s
     for (g = 0; g < w->num_groups; g++) {
       size_t base = g * w->group;
       decode_group(w, row, g, 1.0f, ug);
-      for (b = 0; b < batch; b++) {
+      b = 0;
+      /* Two positions per pass: the decoded group is read once for both, each position's lanes
+       * and sums exactly as one position's (group widths are multiples of 8 here). */
+      if (lanewise && w->group % ND_LANES == 0)
+        for (; b + 2 <= batch; b += 2) {
+          float s0, s1;
+          group_dot_lanes2(ug, xh + b * stride + base, xh + (b + 1) * stride + base, w->group, &s0, &s1);
+          acc[b] += norms[g] * s0;
+          acc[b + 1] += norms[g] * s1;
+        }
+      for (; b < batch; b++) {
         const float *gx = xh + b * stride + base;
         float s = lanewise ? group_dot_lanes(ug, gx, w->group) : group_dot_serial(ug, gx, w->group);
         acc[b] += norms[g] * s;

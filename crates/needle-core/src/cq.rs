@@ -684,7 +684,20 @@ impl CqWeight {
                 // norm = 1.0 leaves the levels unscaled and rounds nothing.
                 self.decode_group(row, g, 1.0, ug);
                 let base = g * self.group;
-                for b in 0..batch {
+                let mut b = 0;
+                // Two positions per pass where that saves work (32-bit ARM): the decoded group is
+                // read once for both, each position's lanes and sums exactly as one position's.
+                if lanewise && PAIR_POSITIONS {
+                    while b + 2 <= batch {
+                        let x0 = &xh[b * stride + base..b * stride + base + self.group];
+                        let x1 = &xh[(b + 1) * stride + base..(b + 1) * stride + base + self.group];
+                        let (s0, s1) = group_dot_lanes2(ug, x0, x1);
+                        acc[b] += norm * s0;
+                        acc[b + 1] += norm * s1;
+                        b += 2;
+                    }
+                }
+                for b in b..batch {
                     let gx = &xh[b * stride + base..b * stride + base + self.group];
                     // Match the summation order of the matvec path this width
                     // uses, so the two agree bit for bit.
@@ -1056,6 +1069,62 @@ fn group_dot_lanes(u: &[f32], x: &[f32]) -> f32 {
         s += u[k] * x[k];
     }
     s
+}
+
+/// Whether the batched matmul takes positions in pairs (`group_dot_lanes2`). On 32-bit ARM it
+/// saves a load of the decoded group per product; elsewhere the compiler's vectorised
+/// `group_dot_lanes` is left alone.
+const PAIR_POSITIONS: bool = cfg!(target_arch = "arm");
+
+/// [`group_dot_lanes`] for two inputs against the same `u`, each exactly as `group_dot_lanes`
+/// computes it.
+#[inline]
+fn group_dot_lanes2(u: &[f32], x0: &[f32], x1: &[f32]) -> (f32, f32) {
+    debug_assert!(u.len() == x0.len() && u.len() == x1.len());
+    let chunks = u.len() / ACC_LANES;
+    #[cfg(all(target_arch = "arm", feature = "neon"))]
+    if chunks > 0 && u.len() % ACC_LANES == 0 {
+        // Safety: all three slices hold exactly `chunks * 8` floats.
+        let (a, b) =
+            unsafe { crate::cq_neon::lanes8x2(u.as_ptr(), x0.as_ptr(), x1.as_ptr(), chunks) };
+        return (a.iter().sum(), b.iter().sum());
+    }
+    #[cfg(all(target_arch = "arm", not(feature = "neon")))]
+    if u.len() % ACC_LANES == 0 {
+        let (mut a0, mut a1, mut a2, mut a3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let (mut a4, mut a5, mut a6, mut a7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let (mut b0, mut b1, mut b2, mut b3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let (mut b4, mut b5, mut b6, mut b7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        for ((uu, p), q) in u
+            .chunks_exact(ACC_LANES)
+            .zip(x0.chunks_exact(ACC_LANES))
+            .zip(x1.chunks_exact(ACC_LANES))
+        {
+            a0 += uu[0] * p[0];
+            a1 += uu[1] * p[1];
+            a2 += uu[2] * p[2];
+            a3 += uu[3] * p[3];
+            a4 += uu[4] * p[4];
+            a5 += uu[5] * p[5];
+            a6 += uu[6] * p[6];
+            a7 += uu[7] * p[7];
+            b0 += uu[0] * q[0];
+            b1 += uu[1] * q[1];
+            b2 += uu[2] * q[2];
+            b3 += uu[3] * q[3];
+            b4 += uu[4] * q[4];
+            b5 += uu[5] * q[5];
+            b6 += uu[6] * q[6];
+            b7 += uu[7] * q[7];
+        }
+        let _ = chunks;
+        return (
+            [a0, a1, a2, a3, a4, a5, a6, a7].iter().sum(),
+            [b0, b1, b2, b3, b4, b5, b6, b7].iter().sum(),
+        );
+    }
+    let _ = chunks;
+    (group_dot_lanes(u, x0), group_dot_lanes(u, x1))
 }
 
 /// Sequential dot, matching the single-accumulator order `matvec_generic` uses

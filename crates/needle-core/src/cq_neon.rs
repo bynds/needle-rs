@@ -48,6 +48,53 @@ pub(crate) unsafe fn lanes8(u: *const f32, x: *const f32, chunks: usize) -> [f32
     out
 }
 
+/// [`lanes8`] for two inputs against the same `u` (two positions of a batch against one decoded
+/// weight group): `u` is loaded once and multiplied into both inputs' accumulators, each input's
+/// lanes and order exactly as `lanes8` gives them. 9 instructions per 16 products against 12.
+/// The second input goes through q0-q1 (d0-d3), caller-saved.
+///
+/// # Safety
+/// `u`, `x0` and `x1` must each be valid for `8 * chunks` reads, and `chunks >= 1`.
+#[inline]
+pub(crate) unsafe fn lanes8x2(
+    u: *const f32,
+    x0: *const f32,
+    x1: *const f32,
+    chunks: usize,
+) -> ([f32; ACC_LANES], [f32; ACC_LANES]) {
+    let mut out0 = [0.0f32; ACC_LANES];
+    let mut out1 = [0.0f32; ACC_LANES];
+    core::arch::asm!(
+        "vmov.i32 q12, #0",
+        "vmov.i32 q13, #0",
+        "vmov.i32 q14, #0",
+        "vmov.i32 q15, #0",
+        "2:",
+        "vld1.32 {{d16-d19}}, [{u}]!",
+        "vld1.32 {{d20-d23}}, [{x0}]!",
+        "vld1.32 {{d0-d3}}, [{x1}]!",
+        "vmla.f32 q12, q8, q10",
+        "vmla.f32 q13, q9, q11",
+        "vmla.f32 q14, q8, q0",
+        "vmla.f32 q15, q9, q1",
+        "subs {n}, {n}, #1",
+        "bne 2b",
+        "vst1.32 {{d24-d27}}, [{o0}]",
+        "vst1.32 {{d28-d31}}, [{o1}]",
+        u = inout(reg) u => _,
+        x0 = inout(reg) x0 => _,
+        x1 = inout(reg) x1 => _,
+        n = inout(reg) chunks => _,
+        o0 = in(reg) out0.as_mut_ptr(),
+        o1 = in(reg) out1.as_mut_ptr(),
+        out("q0") _, out("q1") _,
+        out("q8") _, out("q9") _, out("q10") _, out("q11") _,
+        out("q12") _, out("q13") _, out("q14") _, out("q15") _,
+        options(nostack),
+    );
+    (out0, out1)
+}
+
 /// Lanes of the LUT-decoded group dot, four levels per byte (2-bit and ternary records): byte
 /// `b` contributes `lut[4b .. 4b + 4]` to four consecutive lanes; two bytes fill the eight.
 ///
