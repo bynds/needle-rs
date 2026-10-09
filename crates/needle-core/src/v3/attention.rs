@@ -86,6 +86,16 @@ pub fn causal_depthwise_conv(buf: &mut [f32], taps: &[f32], seq: usize, dim: usi
         return;
     }
     for t in (0..seq).rev() {
+        // Three taps (the model's) with all three rows present: whole rows zipped, so no index
+        // checks; each element's products and additions are the general loop's, in its order.
+        if n_taps == 3 && t >= 2 {
+            let (older, rest) = buf.split_at_mut(t * dim);
+            let (r2, r1) = older[(t - 2) * dim..].split_at(dim);
+            let (k0, k12) = taps.split_at(dim);
+            let (k1, k2) = k12.split_at(dim);
+            conv3_row(&mut rest[..dim], r1, r2, [k0, k1, k2]);
+            continue;
+        }
         for c in 0..dim {
             let mut acc = 0.0f32;
             for j in 0..n_taps {
@@ -96,6 +106,22 @@ pub fn causal_depthwise_conv(buf: &mut [f32], taps: &[f32], seq: usize, dim: usi
             }
             buf[t * dim + c] = acc;
         }
+    }
+}
+
+/// One output row of the three-tap conv: `y = 0 + k0·y + k1·x1 + k2·x2` per element, in that
+/// order. Kept out of line, with the tap rows as separate slices, so the six streams get
+/// registers of their own: inlined, or handed one tap slice, LLVM spilled or re-derived some of
+/// them every element (22 and 16 instructions per element against C's 13).
+#[inline(never)]
+fn conv3_row(y: &mut [f32], x1: &[f32], x2: &[f32], [k0, k1, k2]: [&[f32]; 3]) {
+    for (((((y, &a0), &a1), &a2), &x1), &x2) in y.iter_mut().zip(k0).zip(k1).zip(k2).zip(x1).zip(x2)
+    {
+        let mut acc = 0.0f32;
+        acc += a0 * *y;
+        acc += a1 * x1;
+        acc += a2 * x2;
+        *y = acc;
     }
 }
 

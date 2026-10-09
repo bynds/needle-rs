@@ -259,6 +259,20 @@ static void causal_depthwise_conv(float *buf, const float *taps, size_t seq, siz
   size_t t, c, j;
   if (n_taps == 0) return;
   for (t = seq; t-- > 0;) {
+    /* Three taps (the model's) with all three rows present: three row pointers and constant
+     * tap rows (needle-core's zipped form); each element's products and sums in the same order. */
+    if (n_taps == 3 && t >= 2) {
+      float *y = buf + t * dim;
+      const float *x1 = y - dim, *x2 = y - 2 * dim, *k0 = taps, *k1 = taps + dim, *k2 = taps + 2 * dim;
+      for (c = 0; c < dim; c++) {
+        float acc = 0.0f;
+        acc += k0[c] * y[c];
+        acc += k1[c] * x1[c];
+        acc += k2[c] * x2[c];
+        y[c] = acc;
+      }
+      continue;
+    }
     for (c = 0; c < dim; c++) {
       float acc = 0.0f;
       for (j = 0; j < n_taps; j++) {
@@ -656,6 +670,16 @@ static void conv_step(nd_cache *c, size_t li, int which, const float *taps, floa
   layer_cache *l = &c->layers[li];
   float *tail = which == 0 ? l->q_tail : which == 1 ? l->k_tail : l->v_tail;
   if (n == 0) return;
+  if (n == 3 && pos >= 2) {
+    /* Three taps, both earlier positions present: tail row 1 is pos-1, row 0 pos-2. */
+    const float *t1 = tail + dim, *t0 = tail, *k1 = taps + dim, *k2 = taps + 2 * dim;
+    for (cc = 0; cc < dim; cc++) {
+      float acc = taps[cc] * raw[cc];
+      acc += k1[cc] * t1[cc];
+      acc += k2[cc] * t0[cc];
+      out[cc] = acc;
+    }
+  } else
   for (cc = 0; cc < dim; cc++) {
     float acc = taps[cc] * raw[cc];
     for (j = 1; j < n; j++) {

@@ -419,18 +419,32 @@ impl V3Cache {
         debug_assert_eq!(tail.len(), (n_taps - 1) * dim);
 
         let mut out = vec![0.0f32; dim];
-        for c in 0..dim {
-            let mut acc = taps[c] * raw[c];
-            for j in 1..n_taps {
-                if j > pos {
-                    break;
+        // Three taps with both earlier positions present (the model, past its first two
+        // tokens): zipped rows, no index checks, the general loop's products in its order.
+        if n_taps == 3 && pos >= 2 {
+            let (k0, k12) = taps.split_at(dim);
+            let (k1, k2) = k12.split_at(dim);
+            conv3_step_row(
+                &mut out,
+                raw,
+                &tail[dim..2 * dim],
+                &tail[..dim],
+                [k0, k1, k2],
+            );
+        } else {
+            for c in 0..dim {
+                let mut acc = taps[c] * raw[c];
+                for j in 1..n_taps {
+                    if j > pos {
+                        break;
+                    }
+                    // tail is most-recent-last, so position pos-j is at index
+                    // (n_taps - 1 - j).
+                    let slot = n_taps - 1 - j;
+                    acc += taps[j * dim + c] * tail[slot * dim + c];
                 }
-                // tail is most-recent-last, so position pos-j is at index
-                // (n_taps - 1 - j).
-                let slot = n_taps - 1 - j;
-                acc += taps[j * dim + c] * tail[slot * dim + c];
+                out[c] = acc;
             }
-            out[c] = acc;
         }
 
         // Roll: drop the oldest, append this position's raw vector.
@@ -537,6 +551,26 @@ pub enum Qkv {
     Q,
     K,
     V,
+}
+
+/// One position of the three-tap conv: `out = k0·x + k1·y1 + k2·y0` per element, in that order
+/// (`y1` the previous position, `y0` the one before). Out of line with separate slices, as
+/// `attention::conv3_row`, so LLVM gives each stream a register.
+#[inline(never)]
+fn conv3_step_row(out: &mut [f32], x: &[f32], y1: &[f32], y0: &[f32], [k0, k1, k2]: [&[f32]; 3]) {
+    for (((((o, &x), &a0), &a1), &a2), (&y1, &y0)) in out
+        .iter_mut()
+        .zip(x)
+        .zip(k0)
+        .zip(k1)
+        .zip(k2)
+        .zip(y1.iter().zip(y0))
+    {
+        let mut acc = a0 * x;
+        acc += a1 * y1;
+        acc += a2 * y0;
+        *o = acc;
+    }
 }
 
 #[cfg(test)]

@@ -296,9 +296,9 @@ and Rust traces on x86 and ARMv7, plain and NEON, and the C99 gates.
 
 | Build | Prefill: before → now | Decode, 8 steps: before → now |
 |---|---|---|
-| Rust plain | 35.3 G → 24.1 G (−32%) | 3.01 G → 2.74 G (−9%) |
-| C plain | 47.5 G → 22.5 G (−53%) | 2.49 G → 2.35 G (−6%) |
-| Rust NEON | 15.6 G → 8.5 G (−45%)\* | 1.51 G → 1.02 G (−33%)\* |
+| Rust plain | 35.3 G → 24.0 G (−32%) | 3.01 G → 2.74 G (−9%) |
+| C plain | 47.5 G → 22.4 G (−53%) | 2.49 G → 2.35 G (−6%) |
+| Rust NEON | 15.6 G → 8.4 G (−46%)\* | 1.51 G → 1.01 G (−33%)\* |
 | C NEON | 17.9 G → 7.9 G (−56%)\* | 1.65 G → 0.97 G (−41%)\* |
 
 \* The first NEON measurement already includes the first three changes below.
@@ -337,6 +337,13 @@ Each engine taught the other something:
   −13%.
   With NEON's sixteen q registers, four positions fit at once (eight accumulators, the decoded
   group, one input): NEON prefill −5% more.
+- **C → Rust → C: the three-tap Q/K/V convolution.** Same source in both, but Rust's loop did
+  65 instructions per output to C's 36 (two bounds checks and a reloaded tap count per tap).
+  Specialised to the model's three taps over whole rows (C: three row pointers), it is 13 in
+  both, once the Rust row kernel is out of line with its tap rows as separate slices (inlined,
+  LLVM spilled two row offsets, 22; given one tap slice it re-derived two rows, 16). conv_rope
+  −67% in Rust and −46% in C (prefill), −52% and −37% (decode). Each element keeps its products
+  and order, including the prefill's `0 +` start that the per-step form does not have.
 - **Both: no division in attention.** The 32-bit ARM baseline has no divide instruction, so the
   ring-slot `%` in each attention step was a library call per cached position and head. The slot
   is now stepped: attention −4 to −7% in decode.
