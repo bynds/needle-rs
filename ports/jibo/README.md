@@ -344,6 +344,10 @@ Each engine taught the other something:
   LLVM spilled two row offsets, 22; given one tap slice it re-derived two rows, 16). conv_rope
   −67% in Rust and −46% in C (prefill), −52% and −37% (decode). Each element keeps its products
   and order, including the prefill's `0 +` start that the per-step form does not have.
+  RoPE's rotation had the same problem (22 instructions per pair to C's 12, three bounds
+  checks): zipped halves bring it to 13. With Rust's square root moved to `vsqrt.f32` on
+  hard-float ARM (libm computes it in software there; both are correctly rounded), Rust's
+  conv_rope is 55 M against C's 53 M, from 191 M.
 - **Both: no division in attention.** The 32-bit ARM baseline has no divide instruction, so the
   ring-slot `%` in each attention step was a library call per cached position and head. The slot
   is now stepped: attention −4 to −7% in decode.

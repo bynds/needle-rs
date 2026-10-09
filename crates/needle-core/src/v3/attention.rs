@@ -156,13 +156,17 @@ pub fn norm_and_rope(
                 *v = (1.0 + s) * *v / rms;
             }
 
-            for i in 0..half {
-                let c = cos[t * half + i];
-                let s = sin[t * half + i];
-                let x1 = x[i];
-                let x2 = x[half + i];
-                x[i] = x1 * c - x2 * s;
-                x[half + i] = x2 * c + x1 * s;
+            // Zipped halves and table rows: the same products and sums as indexing, without
+            // three bounds checks per pair (22 instructions against C's 12 on ARMv7).
+            let (lo, hi) = x.split_at_mut(half);
+            let (cr, sr) = (
+                &cos[t * half..(t + 1) * half],
+                &sin[t * half..(t + 1) * half],
+            );
+            for (((a, b), &c), &s) in lo.iter_mut().zip(hi.iter_mut()).zip(cr).zip(sr) {
+                let (x1, x2) = (*a, *b);
+                *a = x1 * c - x2 * s;
+                *b = x2 * c + x1 * s;
             }
         }
     }

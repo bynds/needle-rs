@@ -20,8 +20,27 @@ pub fn cos(x: f32) -> f32 {
     libm::cosf(x)
 }
 
+/// Square root, correctly rounded (IEEE 754), so every implementation gives the same bits.
+///
+/// libm has no 32-bit ARM path and computes it in software there, about a hundred integer
+/// instructions per call; hard-float ARM has `vsqrt.f32`, which the C port's `sqrtf` compiles to.
 #[inline(always)]
 pub fn sqrt(x: f32) -> f32 {
+    #[cfg(all(target_arch = "arm", target_abi = "eabihf"))]
+    {
+        let r: f32;
+        // Safety: one VFP instruction on registers; VFP is part of the hard-float ABI.
+        unsafe {
+            core::arch::asm!(
+                "vsqrt.f32 {r}, {x}",
+                r = lateout(sreg) r,
+                x = in(sreg) x,
+                options(pure, nomem, nostack, preserves_flags),
+            )
+        };
+        r
+    }
+    #[cfg(not(all(target_arch = "arm", target_abi = "eabihf")))]
     libm::sqrtf(x)
 }
 
