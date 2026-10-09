@@ -745,7 +745,45 @@ impl CqWeight {
     fn matvec_lut_impl<const P: usize>(&self, xh: &[f32], row_start: usize, y: &mut [f32]) {
         let bytes_per_group = self.group / P;
         let lut = &self.lut[..256 * P];
-        for (yi, o) in (row_start..row_start + y.len()).enumerate() {
+        #[allow(unused_mut)]
+        let mut first = 0;
+        // ARMv7 NEON, four levels per byte: two rows per pass (`cq_neon::lut4_lanes2`), each
+        // row's lanes and sums exactly as the one-row path computes them.
+        #[cfg(all(target_arch = "arm", feature = "neon"))]
+        if P == 4 && bytes_per_group >= 2 && bytes_per_group % 2 == 0 {
+            let pairs = y.len() / 2;
+            for pr in 0..pairs {
+                let (o0, o1) = (row_start + 2 * pr, row_start + 2 * pr + 1);
+                let r0 = &self.packed[o0 * self.row_bytes..(o0 + 1) * self.row_bytes];
+                let r1 = &self.packed[o1 * self.row_bytes..(o1 + 1) * self.row_bytes];
+                let n0 = &self.norms[o0 * self.num_groups..(o0 + 1) * self.num_groups];
+                let n1 = &self.norms[o1 * self.num_groups..(o1 + 1) * self.num_groups];
+                let (mut t0, mut t1) = (0.0f32, 0.0f32);
+                for g in 0..self.num_groups {
+                    let gx = &xh[g * self.group..(g + 1) * self.group];
+                    let b0 = &r0[g * bytes_per_group..(g + 1) * bytes_per_group];
+                    let b1 = &r1[g * bytes_per_group..(g + 1) * bytes_per_group];
+                    debug_assert!(gx.len() >= bytes_per_group * 4 && lut.len() >= 1024);
+                    // Safety: each group holds `bytes_per_group` bytes and `4 *` that many inputs.
+                    let (l0, l1) = unsafe {
+                        crate::cq_neon::lut4_lanes2(
+                            lut.as_ptr(),
+                            b0.as_ptr(),
+                            b1.as_ptr(),
+                            gx.as_ptr(),
+                            bytes_per_group / 2,
+                        )
+                    };
+                    t0 += n0[g] * l0.iter().sum::<f32>();
+                    t1 += n1[g] * l1.iter().sum::<f32>();
+                }
+                y[2 * pr] = t0;
+                y[2 * pr + 1] = t1;
+            }
+            first = 2 * pairs;
+        }
+        for (yi, o) in (row_start + first..row_start + y.len()).enumerate() {
+            let yi = yi + first;
             let row = &self.packed[o * self.row_bytes..(o + 1) * self.row_bytes];
             let row_norms = &self.norms[o * self.num_groups..(o + 1) * self.num_groups];
             let mut total = 0.0f32;
@@ -906,37 +944,24 @@ fn dot_group<const P: usize>(lut: &[f32], gbytes: &[u8], gx: &[f32]) -> f32 {
     // LUT cost fewer instructions than staging through `vals` (perfvm, exact instruction counts:
     // the C port's kernel, which already had this shape, needed 17% fewer per decode step). Same
     // products, same lanes, same order.
+    // Only for four indices per byte (2-bit and ternary records): for two (4-bit), the staged
+    // form below measured 3.9% fewer instructions on the logits head.
     #[cfg(target_arch = "arm")]
-    {
+    if P == 4 {
         let (mut l0, mut l1, mut l2, mut l3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
         let (mut l4, mut l5, mut l6, mut l7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
         while bi < full {
             let xs: &[f32; ACC_LANES] = gx[bi * P..bi * P + ACC_LANES].try_into().unwrap();
-            if P == 4 {
-                let e0: &[f32; 4] = lut[gbytes[bi] as usize * 4..][..4].try_into().unwrap();
-                let e1: &[f32; 4] = lut[gbytes[bi + 1] as usize * 4..][..4].try_into().unwrap();
-                l0 += e0[0] * xs[0];
-                l1 += e0[1] * xs[1];
-                l2 += e0[2] * xs[2];
-                l3 += e0[3] * xs[3];
-                l4 += e1[0] * xs[4];
-                l5 += e1[1] * xs[5];
-                l6 += e1[2] * xs[6];
-                l7 += e1[3] * xs[7];
-            } else {
-                let e0: &[f32; 2] = lut[gbytes[bi] as usize * 2..][..2].try_into().unwrap();
-                let e1: &[f32; 2] = lut[gbytes[bi + 1] as usize * 2..][..2].try_into().unwrap();
-                let e2: &[f32; 2] = lut[gbytes[bi + 2] as usize * 2..][..2].try_into().unwrap();
-                let e3: &[f32; 2] = lut[gbytes[bi + 3] as usize * 2..][..2].try_into().unwrap();
-                l0 += e0[0] * xs[0];
-                l1 += e0[1] * xs[1];
-                l2 += e1[0] * xs[2];
-                l3 += e1[1] * xs[3];
-                l4 += e2[0] * xs[4];
-                l5 += e2[1] * xs[5];
-                l6 += e3[0] * xs[6];
-                l7 += e3[1] * xs[7];
-            }
+            let e0: &[f32; 4] = lut[gbytes[bi] as usize * 4..][..4].try_into().unwrap();
+            let e1: &[f32; 4] = lut[gbytes[bi + 1] as usize * 4..][..4].try_into().unwrap();
+            l0 += e0[0] * xs[0];
+            l1 += e0[1] * xs[1];
+            l2 += e0[2] * xs[2];
+            l3 += e0[3] * xs[3];
+            l4 += e1[0] * xs[4];
+            l5 += e1[1] * xs[5];
+            l6 += e1[2] * xs[6];
+            l7 += e1[3] * xs[7];
             bi += per_iter;
         }
         lanes = [l0, l1, l2, l3, l4, l5, l6, l7];

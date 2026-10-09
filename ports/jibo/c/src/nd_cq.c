@@ -60,6 +60,45 @@ static void neon_lut4_lanes(const float *lut, const uint8_t *g, const float *x, 
       : "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27", "cc", "memory");
 }
 
+/* neon_lut4_lanes for two rows at once (needle-core's lut4_lanes2): each row keeps its own two
+ * accumulators and lane order; the rows share the loads of x and the loop control. The second
+ * row's levels use q0-q1 (d0-d3), caller-saved. */
+static void neon_lut4_lanes2(const float *lut, const uint8_t *g0, const uint8_t *g1, const float *x, size_t pairs,
+                             float out0[8], float out1[8]) {
+  uint32_t t0, t1;
+  __asm__ __volatile__(
+      "vmov.i32 q12, #0\n\t"
+      "vmov.i32 q13, #0\n\t"
+      "vmov.i32 q14, #0\n\t"
+      "vmov.i32 q15, #0\n\t"
+      "1:\n\t"
+      "ldrb %[t0], [%[g0]], #1\n\t"
+      "ldrb %[t1], [%[g0]], #1\n\t"
+      "add %[t0], %[lut], %[t0], lsl #4\n\t"
+      "add %[t1], %[lut], %[t1], lsl #4\n\t"
+      "vld1.32 {d16-d17}, [%[t0]]\n\t"
+      "vld1.32 {d18-d19}, [%[t1]]\n\t"
+      "ldrb %[t0], [%[g1]], #1\n\t"
+      "ldrb %[t1], [%[g1]], #1\n\t"
+      "add %[t0], %[lut], %[t0], lsl #4\n\t"
+      "add %[t1], %[lut], %[t1], lsl #4\n\t"
+      "vld1.32 {d0-d1}, [%[t0]]\n\t"
+      "vld1.32 {d2-d3}, [%[t1]]\n\t"
+      "vld1.32 {d20-d23}, [%[x]]!\n\t"
+      "vmla.f32 q12, q8, q10\n\t"
+      "vmla.f32 q13, q9, q11\n\t"
+      "vmla.f32 q14, q0, q10\n\t"
+      "vmla.f32 q15, q1, q11\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      "vst1.32 {d24-d27}, [%[o0]]\n\t"
+      "vst1.32 {d28-d31}, [%[o1]]\n\t"
+      : [g0] "+r"(g0), [g1] "+r"(g1), [x] "+r"(x), [n] "+r"(pairs), [t0] "=&r"(t0), [t1] "=&r"(t1)
+      : [lut] "r"(lut), [o0] "r"(out0), [o1] "r"(out1)
+      : "d0", "d1", "d2", "d3", "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27",
+        "d28", "d29", "d30", "d31", "cc", "memory");
+}
+
 static void neon_lut2_lanes(const float *lut, const uint8_t *g, const float *x, size_t quads, float out[8]) {
   uint32_t t0, t1;
   __asm__ __volatile__(
@@ -419,8 +458,27 @@ DEFINE_DOT_GROUP(4)
 DEFINE_DOT_GROUP(2)
 
 void nd_cq_matvec_rows_prepared(const nd_cq *w, const float *xh, size_t row_start, size_t rows, float *y) {
-  size_t yi, g;
-  for (yi = 0; yi < rows; yi++) {
+  size_t yi = 0, g;
+#if ND_NEON_ASM
+  /* Four levels per byte: two rows per pass, each row's lanes and sums exactly as one row's. */
+  if (w->per_byte == 4 && w->group / 4 >= 2 && (w->group / 4) % 2 == 0) {
+    size_t bpg = w->group / 4;
+    for (; yi + 2 <= rows; yi += 2) {
+      size_t o = row_start + yi;
+      const uint8_t *r0 = w->packed + o * w->row_bytes, *r1 = r0 + w->row_bytes;
+      const float *n0 = w->norms + o * w->num_groups, *n1 = n0 + w->num_groups;
+      float t0 = 0.0f, t1 = 0.0f, l0[ND_LANES], l1[ND_LANES];
+      for (g = 0; g < w->num_groups; g++) {
+        neon_lut4_lanes2(w->lut, r0 + g * bpg, r1 + g * bpg, xh + g * w->group, bpg / 2, l0, l1);
+        t0 += n0[g] * sum_lanes(l0);
+        t1 += n1[g] * sum_lanes(l1);
+      }
+      y[yi] = t0;
+      y[yi + 1] = t1;
+    }
+  }
+#endif
+  for (; yi < rows; yi++) {
     size_t o = row_start + yi;
     const uint8_t *row = w->packed + o * w->row_bytes;
     const float *norms = w->norms + o * w->num_groups;

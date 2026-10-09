@@ -91,6 +91,67 @@ pub(crate) unsafe fn lut4_lanes(
     out
 }
 
+/// [`lut4_lanes`] for two rows at once: each row keeps its own two accumulators and its own lane
+/// order, so each row's lanes are bit for bit what `lut4_lanes` gives it. The rows share every
+/// load of `x` and the loop control (19 instructions per 16 products against 22). The second
+/// row's levels go through q0-q1 (d0-d3), caller-saved in the AAPCS.
+///
+/// # Safety
+/// As [`lut4_lanes`], for both `g0` and `g1`.
+#[inline]
+pub(crate) unsafe fn lut4_lanes2(
+    lut: *const f32,
+    g0: *const u8,
+    g1: *const u8,
+    x: *const f32,
+    pairs: usize,
+) -> ([f32; ACC_LANES], [f32; ACC_LANES]) {
+    let mut out0 = [0.0f32; ACC_LANES];
+    let mut out1 = [0.0f32; ACC_LANES];
+    core::arch::asm!(
+        "vmov.i32 q12, #0",
+        "vmov.i32 q13, #0",
+        "vmov.i32 q14, #0",
+        "vmov.i32 q15, #0",
+        "2:",
+        "ldrb {t0}, [{g0}], #1",
+        "ldrb {t1}, [{g0}], #1",
+        "add {t0}, {lut}, {t0}, lsl #4",
+        "add {t1}, {lut}, {t1}, lsl #4",
+        "vld1.32 {{d16-d17}}, [{t0}]",
+        "vld1.32 {{d18-d19}}, [{t1}]",
+        "ldrb {t0}, [{g1}], #1",
+        "ldrb {t1}, [{g1}], #1",
+        "add {t0}, {lut}, {t0}, lsl #4",
+        "add {t1}, {lut}, {t1}, lsl #4",
+        "vld1.32 {{d0-d1}}, [{t0}]",
+        "vld1.32 {{d2-d3}}, [{t1}]",
+        "vld1.32 {{d20-d23}}, [{x}]!",
+        "vmla.f32 q12, q8, q10",
+        "vmla.f32 q13, q9, q11",
+        "vmla.f32 q14, q0, q10",
+        "vmla.f32 q15, q1, q11",
+        "subs {n}, {n}, #1",
+        "bne 2b",
+        "vst1.32 {{d24-d27}}, [{o0}]",
+        "vst1.32 {{d28-d31}}, [{o1}]",
+        lut = in(reg) lut,
+        g0 = inout(reg) g0 => _,
+        g1 = inout(reg) g1 => _,
+        x = inout(reg) x => _,
+        n = inout(reg) pairs => _,
+        o0 = in(reg) out0.as_mut_ptr(),
+        o1 = in(reg) out1.as_mut_ptr(),
+        t0 = out(reg) _,
+        t1 = out(reg) _,
+        out("q0") _, out("q1") _,
+        out("q8") _, out("q9") _, out("q10") _, out("q11") _,
+        out("q12") _, out("q13") _, out("q14") _, out("q15") _,
+        options(nostack),
+    );
+    (out0, out1)
+}
+
 /// As [`lut4_lanes`] for two levels per byte (4-bit records): four bytes fill the eight lanes.
 ///
 /// # Safety

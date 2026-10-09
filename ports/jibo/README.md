@@ -296,10 +296,10 @@ and Rust traces on x86 and ARMv7, plain and NEON, and the C99 gates.
 
 | Build | Prefill: before → now | Decode, 8 steps: before → now |
 |---|---|---|
-| Rust plain | 35.3 G → 26.6 G (−25%) | 3.01 G → 2.76 G (−8%) |
+| Rust plain | 35.3 G → 26.5 G (−25%) | 3.01 G → 2.75 G (−9%) |
 | C plain | 47.5 G → 25.7 G (−46%) | 2.49 G → 2.36 G (−5%) |
-| Rust NEON | 15.6 G → 9.7 G (−38%)\* | 1.51 G → 1.13 G (−25%)\* |
-| C NEON | 17.9 G → 9.4 G (−48%)\* | 1.65 G → 1.11 G (−33%)\* |
+| Rust NEON | 15.6 G → 9.7 G (−38%)\* | 1.51 G → 1.04 G (−31%)\* |
+| C NEON | 17.9 G → 9.4 G (−48%)\* | 1.65 G → 0.99 G (−40%)\* |
 
 \* The first NEON measurement already includes the first three changes below.
 `results/emulated-arm-perf-*.jsonl` has every operation.
@@ -311,8 +311,8 @@ Each engine taught the other something:
   and `forward_cells` ran it for every position and kept none. They now compute the last row or
   none. Head cost in prefill fell 98%.
 - **C → Rust: register lanes on 32-bit ARM.** The C kernels' eight named accumulators beat
-  LLVM's code for the staged lane arrays in the plain build: −5.6% on the 2-bit projections. The
-  same change cost the 4-bit head 3.9%, so that case is being revisited.
+  LLVM's code for the staged lane arrays in the plain build: −5.6% on the 2-bit projections.
+  On the 4-bit head they cost 3.9%, so that width keeps the staged form.
 - **Rust → C: the same, the other way.** GCC did not keep lane arrays in registers anywhere.
   The C batched matmul used 1.9× Rust's instructions until it got named locals and an unrolled,
   per-width LUT decode: C prefill −42% in one step.
@@ -326,6 +326,9 @@ Each engine taught the other something:
   attention's accumulate were all "add a scaled row" in disguise. Interchanged to whole-row
   loops (each element keeps its additions in the same order), they share one `axpy` kernel,
   NEON in both languages and unrolled in plain C: MLP −65% and attention −45 to −55% on NEON.
+- **Both: two rows per pass in the NEON matvec.** Decode is mostly LUT matvecs. A kernel that
+  takes two weight rows at once, each with its own accumulators and lane order, shares every
+  activation load and the loop control: NEON decode −8 to −11%.
 - **Both: batched Engram projections.** The Engram key and value projections ran a matvec per
   position, each preparing the same input. They now use the batched matmul (bit-identical by
   construction) with one shared preparation: Engram −11 to −34%.
