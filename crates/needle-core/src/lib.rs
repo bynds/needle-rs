@@ -18,6 +18,7 @@ pub mod math;
 pub mod model;
 pub mod norm;
 pub mod ops;
+pub mod prof;
 pub mod quant;
 pub mod rope;
 pub mod v2;

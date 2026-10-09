@@ -14,6 +14,103 @@
 #define ND_HAVE_NEON 0
 #endif
 
+#if ND_HAVE_NEON && defined(__GNUC__)
+/* The NEON inner loops of needle-core's cq_neon.rs, instruction for instruction: post-increment
+ * 32-byte loads into two q registers and two non-fused VMLA per eight lanes. GCC's code for the
+ * same loops from arm_neon.h intrinsics split each load in two and kept extra counters (perfvm:
+ * 11 instructions per eight lanes against 7, about 50% more for every CQ product). q8-q13 are
+ * d16-d27, caller-saved in the AAPCS. Each needs n >= 1. */
+static void neon_lanes8(const float *u, const float *x, size_t n, float out[8]) {
+  __asm__ __volatile__(
+      "vmov.i32 q12, #0\n\t"
+      "vmov.i32 q13, #0\n\t"
+      "1:\n\t"
+      "vld1.32 {d16-d19}, [%[u]]!\n\t"
+      "vld1.32 {d20-d23}, [%[x]]!\n\t"
+      "vmla.f32 q12, q8, q10\n\t"
+      "vmla.f32 q13, q9, q11\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      "vst1.32 {d24-d27}, [%[o]]\n\t"
+      : [u] "+r"(u), [x] "+r"(x), [n] "+r"(n)
+      : [o] "r"(out)
+      : "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27", "cc", "memory");
+}
+
+static void neon_lut4_lanes(const float *lut, const uint8_t *g, const float *x, size_t pairs, float out[8]) {
+  uint32_t t0, t1;
+  __asm__ __volatile__(
+      "vmov.i32 q12, #0\n\t"
+      "vmov.i32 q13, #0\n\t"
+      "1:\n\t"
+      "ldrb %[t0], [%[g]], #1\n\t"
+      "ldrb %[t1], [%[g]], #1\n\t"
+      "add %[t0], %[lut], %[t0], lsl #4\n\t"
+      "add %[t1], %[lut], %[t1], lsl #4\n\t"
+      "vld1.32 {d16-d17}, [%[t0]]\n\t"
+      "vld1.32 {d18-d19}, [%[t1]]\n\t"
+      "vld1.32 {d20-d23}, [%[x]]!\n\t"
+      "vmla.f32 q12, q8, q10\n\t"
+      "vmla.f32 q13, q9, q11\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      "vst1.32 {d24-d27}, [%[o]]\n\t"
+      : [g] "+r"(g), [x] "+r"(x), [n] "+r"(pairs), [t0] "=&r"(t0), [t1] "=&r"(t1)
+      : [lut] "r"(lut), [o] "r"(out)
+      : "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27", "cc", "memory");
+}
+
+static void neon_lut2_lanes(const float *lut, const uint8_t *g, const float *x, size_t quads, float out[8]) {
+  uint32_t t0, t1;
+  __asm__ __volatile__(
+      "vmov.i32 q12, #0\n\t"
+      "vmov.i32 q13, #0\n\t"
+      "1:\n\t"
+      "ldrb %[t0], [%[g]], #1\n\t"
+      "ldrb %[t1], [%[g]], #1\n\t"
+      "add %[t0], %[lut], %[t0], lsl #3\n\t"
+      "add %[t1], %[lut], %[t1], lsl #3\n\t"
+      "vld1.32 {d16}, [%[t0]]\n\t"
+      "vld1.32 {d17}, [%[t1]]\n\t"
+      "ldrb %[t0], [%[g]], #1\n\t"
+      "ldrb %[t1], [%[g]], #1\n\t"
+      "add %[t0], %[lut], %[t0], lsl #3\n\t"
+      "add %[t1], %[lut], %[t1], lsl #3\n\t"
+      "vld1.32 {d18}, [%[t0]]\n\t"
+      "vld1.32 {d19}, [%[t1]]\n\t"
+      "vld1.32 {d20-d23}, [%[x]]!\n\t"
+      "vmla.f32 q12, q8, q10\n\t"
+      "vmla.f32 q13, q9, q11\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      "vst1.32 {d24-d27}, [%[o]]\n\t"
+      : [g] "+r"(g), [x] "+r"(x), [n] "+r"(quads), [t0] "=&r"(t0), [t1] "=&r"(t1)
+      : [lut] "r"(lut), [o] "r"(out)
+      : "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27", "cc", "memory");
+}
+
+static void neon_axpy8(float *y, float a, const float *x, size_t chunks) {
+  uint32_t ab; /* a's bits, through a core register as cq_neon.rs passes them */
+  memcpy(&ab, &a, sizeof ab);
+  __asm__ __volatile__(
+      "vdup.32 q14, %[a]\n\t"
+      "1:\n\t"
+      "vld1.32 {d16-d19}, [%[x]]!\n\t"
+      "vld1.32 {d20-d23}, [%[y]]\n\t"
+      "vmla.f32 q10, q8, q14\n\t"
+      "vmla.f32 q11, q9, q14\n\t"
+      "vst1.32 {d20-d23}, [%[y]]!\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      : [y] "+r"(y), [x] "+r"(x), [n] "+r"(chunks)
+      : [a] "r"(ab)
+      : "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d28", "d29", "cc", "memory");
+}
+#define ND_NEON_ASM 1
+#else
+#define ND_NEON_ASM 0
+#endif
+
 #define TERNARY_CENTROID 1.2240064f
 
 static void fwht(float *x, size_t n) {
@@ -28,6 +125,25 @@ static void fwht(float *x, size_t n) {
     }
     h <<= 1;
   }
+}
+
+void nd_axpy(float *y, float a, const float *x, size_t n) {
+  size_t i = 0;
+#if ND_NEON_ASM
+  if (n >= 8) {
+    neon_axpy8(y, a, x, n / 8);
+    i = n / 8 * 8;
+  }
+#else
+  /* Unrolled by four: GCC at -O2 does not unroll, and the loop overhead was most of each step. */
+  for (; i + 4 <= n; i += 4) {
+    y[i] += a * x[i];
+    y[i + 1] += a * x[i + 1];
+    y[i + 2] += a * x[i + 2];
+    y[i + 3] += a * x[i + 3];
+  }
+#endif
+  for (; i < n; i++) y[i] += a * x[i];
 }
 
 void nd_fwht_normalized(float *x, size_t n) {
@@ -183,8 +299,23 @@ static void decode_group(const nd_cq *w, const uint8_t *row, size_t g, float nor
   if (w->per_byte) {
     size_t p = w->per_byte, bpg = w->group / p, bi;
     const uint8_t *gb = row + g * bpg;
-    for (bi = 0; bi < bpg; bi++)
-      for (k = 0; k < p; k++) buf[bi * p + k] = w->lut[gb[bi] * p + k] * norm;
+    const float *lut = w->lut;
+    /* The batched path decodes unscaled (norm 1, which rounds nothing): a plain LUT copy,
+     * specialised by indices per byte so the copy unrolls. */
+    if (norm == 1.0f && p == 4)
+      for (bi = 0; bi < bpg; bi++) {
+        const float *e = lut + gb[bi] * 4;
+        float *o = buf + bi * 4;
+        o[0] = e[0], o[1] = e[1], o[2] = e[2], o[3] = e[3];
+      }
+    else if (norm == 1.0f && p == 2)
+      for (bi = 0; bi < bpg; bi++) {
+        const float *e = lut + gb[bi] * 2;
+        buf[bi * 2] = e[0], buf[bi * 2 + 1] = e[1];
+      }
+    else
+      for (bi = 0; bi < bpg; bi++)
+        for (k = 0; k < p; k++) buf[bi * p + k] = lut[gb[bi] * p + k] * norm;
   } else {
     size_t bits = w->bits;
     uint32_t mask = (1u << bits) - 1;
@@ -202,21 +333,24 @@ static float sum_lanes(const float *l) {
 
 /* group_dot_lanes: a decoded group u against x. len is a multiple of 8 here (group >= 8). */
 static float group_dot_lanes(const float *u, const float *x, size_t len) {
-  size_t chunks = len / ND_LANES, c, k;
+  size_t chunks = len / ND_LANES, c;
   float lanes[ND_LANES];
-#if ND_HAVE_NEON
-  float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);
-  for (c = 0; c < chunks; c++) {
-    a0 = vmlaq_f32(a0, vld1q_f32(u + c * 8), vld1q_f32(x + c * 8));
-    a1 = vmlaq_f32(a1, vld1q_f32(u + c * 8 + 4), vld1q_f32(x + c * 8 + 4));
+#if ND_NEON_ASM
+  if (chunks) {
+    neon_lanes8(u, x, chunks, lanes);
+  } else {
+    for (c = 0; c < ND_LANES; c++) lanes[c] = 0.0f;
   }
-  vst1q_f32(lanes, a0);
-  vst1q_f32(lanes + 4, a1);
-  (void)k;
 #else
-  for (k = 0; k < ND_LANES; k++) lanes[k] = 0.0f;
-  for (c = 0; c < chunks; c++)
-    for (k = 0; k < ND_LANES; k++) lanes[k] += u[c * ND_LANES + k] * x[c * ND_LANES + k];
+  /* Eight locals rather than a lane array, as in dot_group: GCC keeps them in registers. */
+  float l0 = 0.0f, l1 = 0.0f, l2 = 0.0f, l3 = 0.0f, l4 = 0.0f, l5 = 0.0f, l6 = 0.0f, l7 = 0.0f;
+  for (c = 0; c < chunks; c++) {
+    const float *uu = u + c * 8, *xx = x + c * 8;
+    l0 += uu[0] * xx[0], l1 += uu[1] * xx[1], l2 += uu[2] * xx[2], l3 += uu[3] * xx[3];
+    l4 += uu[4] * xx[4], l5 += uu[5] * xx[5], l6 += uu[6] * xx[6], l7 += uu[7] * xx[7];
+  }
+  lanes[0] = l0, lanes[1] = l1, lanes[2] = l2, lanes[3] = l3;
+  lanes[4] = l4, lanes[5] = l5, lanes[6] = l6, lanes[7] = l7;
 #endif
   return sum_lanes(lanes);
 }
@@ -230,23 +364,17 @@ static float group_dot_serial(const float *u, const float *x, size_t len) {
 
 /* dot_group<P>: LUT decode fused with the 8-lane dot (the matvec path). Instantiated per P, as
  * Rust's const generic is: with P a constant the compiler unrolls the decode. */
-#if ND_HAVE_NEON
+#if ND_NEON_ASM
 #define DOT_GROUP_LANES(P)                                                                     \
-  float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);                                  \
-  for (; bi < full; bi += per_iter) {                                                          \
-    float32x4_t v0, v1;                                                                        \
-    if ((P) == 4) {                                                                            \
-      v0 = vld1q_f32(lut + gbytes[bi] * 4);                                                    \
-      v1 = vld1q_f32(lut + gbytes[bi + 1] * 4);                                                \
-    } else {                                                                                   \
-      v0 = vcombine_f32(vld1_f32(lut + gbytes[bi] * 2), vld1_f32(lut + gbytes[bi + 1] * 2));   \
-      v1 = vcombine_f32(vld1_f32(lut + gbytes[bi + 2] * 2), vld1_f32(lut + gbytes[bi + 3] * 2)); \
-    }                                                                                          \
-    a0 = vmlaq_f32(a0, v0, vld1q_f32(gx + bi * (P)));                                          \
-    a1 = vmlaq_f32(a1, v1, vld1q_f32(gx + bi * (P) + 4));                                      \
-  }                                                                                            \
-  vst1q_f32(lanes, a0);                                                                        \
-  vst1q_f32(lanes + 4, a1);
+  if (full) {                                                                                  \
+    if ((P) == 4)                                                                              \
+      neon_lut4_lanes(lut, gbytes, gx, full / per_iter, lanes);                                \
+    else                                                                                       \
+      neon_lut2_lanes(lut, gbytes, gx, full / per_iter, lanes);                                \
+    bi = full;                                                                                 \
+  } else {                                                                                     \
+    for (k = 0; k < ND_LANES; k++) lanes[k] = 0.0f;                                            \
+  }
 #else
 /* Scalar: the eight lanes as eight locals, so the compiler keeps them in registers (an array
  * indexed in a loop measured ~17% slower on ARMv7 VFP), and the LUT entries for one step of eight

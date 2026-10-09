@@ -22,6 +22,7 @@ use crate::v3::cache::{fake_quant_vec, quantize_rows, KvPrecision, Qkv, V3Cache}
 
 /// Positions per batched-prefill chunk.
 pub const DEFAULT_CHUNK: usize = 64;
+use crate::prof::{self, Op};
 use crate::v3::config::V3Config;
 use crate::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
 use crate::v3::heads::{ProbeHead, ProbePool};
@@ -193,6 +194,19 @@ fn check_shapes(
     Ok(())
 }
 
+impl V3Mhc {
+    /// Whether the three gate projections take the same prepared input: the same input width and
+    /// group size, so one norm and one Hadamard preparation of the lanes serve all three.
+    pub fn shares_preparation(&self) -> bool {
+        let same = |w: &CqWeight| {
+            w.in_feat == self.phi_pre.in_feat
+                && w.group == self.phi_pre.group
+                && w.prepared_len() == self.phi_pre.prepared_len()
+        };
+        same(&self.phi_post) && same(&self.phi_res)
+    }
+}
+
 impl V3Model {
     pub fn new(
         cfg: V3Config,
@@ -242,6 +256,7 @@ impl V3Model {
         let pos = cache.pos();
         let rows = cfg.logit_rows();
 
+        let p_engram = prof::span(Op::Engram);
         cache.push_token(token);
 
         // ── Engram for this position ─────────────────────────────────────
@@ -279,7 +294,10 @@ impl V3Model {
             ev[s * d..(s + 1) * d].copy_from_slice(&cur);
         }
 
+        drop(p_engram);
+
         // ── Lane stream for this position ────────────────────────────────
+        let p_embed = prof::span(Op::Embed);
         let mut lanes = vec![0.0f32; n * d];
         let mut emb = vec![0.0f32; d];
         self.embedding
@@ -290,6 +308,8 @@ impl V3Model {
         for lane in 0..n {
             lanes[lane * d..(lane + 1) * d].copy_from_slice(&emb);
         }
+
+        drop(p_embed);
 
         let dims = AttnDims {
             seq: 1,
@@ -308,6 +328,7 @@ impl V3Model {
         let mut hres = vec![0.0f32; n * n];
         let mut scratch = vec![0.0f32; n * d];
         let mut u = vec![0.0f32; d];
+        let shared_prep = self.mhc.shares_preparation();
         let mut q = vec![0.0f32; cfg.q_dim()];
         let mut k = vec![0.0f32; cfg.k_dim()];
         let mut v = vec![0.0f32; cfg.v_dim()];
@@ -327,13 +348,28 @@ impl V3Model {
                 b_res: &self.mhc.b_res[li * n * n..(li + 1) * n * n],
             };
 
+            let p = prof::span(Op::Mhc);
             rms_unit_to(&lanes, &mut nx);
             self.mhc.phi_pre.prepare_input(&nx, &mut nx_prep);
             self.mhc
                 .phi_pre
                 .matvec_rows_prepared(&nx_prep, li * n, &mut hpre);
+            // phi_post and phi_res read the same lane norm as phi_pre (the lanes only change in
+            // scatter_up), with the same preparation when their geometry matches: one norm and
+            // one preparation for all three.
+            if shared_prep {
+                self.mhc
+                    .phi_post
+                    .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
+                self.mhc
+                    .phi_res
+                    .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+            }
             mix_down(&lanes, &mut hpre, &m, li, n, d, &mut u);
 
+            drop(p);
+
+            let p = prof::span(Op::Engram);
             let mut bx = u.clone();
             if let Some(site) = cfg.engram.site_of(li) {
                 crate::v3::engram::apply_site(
@@ -344,12 +380,18 @@ impl V3Model {
                 );
             }
 
+            drop(p);
+
+            let p = prof::span(Op::Qkv);
             let mut h = bx.clone();
             zc_rms_norm_vec(&mut h, &layer.norm_in);
             layer.q_proj.matvec(&h, &mut q);
             layer.k_proj.matvec(&h, &mut k);
             layer.v_proj.matvec(&h, &mut v);
 
+            drop(p);
+
+            let p = prof::span(Op::ConvRope);
             if cfg.qkv_conv_taps > 0 {
                 cache.conv_step(li, Qkv::Q, &layer.q_taps, &mut q);
                 cache.conv_step(li, Qkv::K, &layer.k_taps, &mut k);
@@ -380,6 +422,9 @@ impl V3Model {
                 // other half of upstream's quantised attention.
                 quant_rows(&mut q, 1, cfg.num_heads, cfg.qk_head_dim);
             }
+            drop(p);
+
+            let p = prof::span(Op::Attn);
             cache.write_kv(li, pos, &k, &v);
             let (lo, hi) = cache.span(li, pos);
             let slots = cache.slots(li);
@@ -395,6 +440,9 @@ impl V3Model {
                 &mut attn,
             );
 
+            drop(p);
+
+            let p = prof::span(Op::GateOut);
             layer.gate_proj.matvec(&h, &mut gate);
             for (ai, &gi) in attn.iter_mut().zip(gate.iter()) {
                 *ai *= sigmoid(gi);
@@ -406,6 +454,9 @@ impl V3Model {
                 *si += agate * pi;
             }
 
+            drop(p);
+
+            let p = prof::span(Op::Mlp);
             proj.copy_from_slice(&bx);
             zc_rms_norm_vec(&mut proj, &layer.pre_hada);
             hadamard_mlp(&proj, &layer.mlp, &self.perms, cfg.hada_n, &mut mlp_out);
@@ -413,20 +464,25 @@ impl V3Model {
                 *si += mi;
             }
 
+            drop(p);
+
+            let p = prof::span(Op::Mhc);
             let mut y = vec![0.0f32; d];
             for c in 0..d {
                 y[c] = bx[c] - u[c];
             }
 
-            rms_unit_to(&lanes, &mut nx);
-            self.mhc.phi_post.prepare_input(&nx, &mut nx_prep);
-            self.mhc
-                .phi_post
-                .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
-            self.mhc.phi_res.prepare_input(&nx, &mut nx_prep);
-            self.mhc
-                .phi_res
-                .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+            if !shared_prep {
+                rms_unit_to(&lanes, &mut nx);
+                self.mhc.phi_post.prepare_input(&nx, &mut nx_prep);
+                self.mhc
+                    .phi_post
+                    .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
+                self.mhc.phi_res.prepare_input(&nx, &mut nx_prep);
+                self.mhc
+                    .phi_res
+                    .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+            }
             scatter_up(
                 &mut lanes,
                 Gates {
@@ -442,9 +498,12 @@ impl V3Model {
                 },
                 &mut scratch,
             );
+            drop(p);
         }
 
         cache.advance();
+
+        let _p = prof::span(Op::Head);
 
         let mut x = vec![0.0f32; d];
         for (c, xc) in x.iter_mut().enumerate() {
@@ -534,21 +593,49 @@ impl V3Model {
         let mut fetched = vec![0.0f32; fetch_dim];
         let mut row = vec![0.0f32; dims.sub_dim];
 
+        // Key and value projections batched over chunks of positions, as the block's Q/K/V are:
+        // `matmul_rows_prepared` is bit-identical to a matvec per position, decodes each weight
+        // group once per chunk instead of once per position, and the two projections share one
+        // preparation of the fetched rows when their input geometry matches.
+        let chunk = DEFAULT_CHUNK.min(seq.max(1));
+        let mut acc = vec![0.0f32; chunk];
         for (s, site) in self.engrams.iter().enumerate() {
-            for p in 0..seq {
-                for t in 0..dims.num_tables {
-                    let dst = &mut fetched[t * dims.sub_dim..(t + 1) * dims.sub_dim];
-                    if ngram_valid(p, t, &e.orders, e.heads) {
-                        let slot = indices[p * dims.num_tables + t] as usize;
-                        site.tables.dequantize_row(t * dims.slots + slot, &mut row);
-                        dst.copy_from_slice(&row);
+            let shared = site.value_proj.in_feat == site.key_proj.in_feat
+                && site.value_proj.group == site.key_proj.group
+                && site.value_proj.prepared_len() == site.key_proj.prepared_len();
+            let prep = site.key_proj.prepared_len();
+            let mut xh = vec![0.0f32; if shared { chunk * prep } else { 0 }];
+            for c0 in (0..seq).step_by(chunk) {
+                let b = (seq - c0).min(chunk);
+                for i in 0..b {
+                    let p = c0 + i;
+                    for t in 0..dims.num_tables {
+                        let dst = &mut fetched[t * dims.sub_dim..(t + 1) * dims.sub_dim];
+                        if ngram_valid(p, t, &e.orders, e.heads) {
+                            let slot = indices[p * dims.num_tables + t] as usize;
+                            site.tables.dequantize_row(t * dims.slots + slot, &mut row);
+                            dst.copy_from_slice(&row);
+                        } else {
+                            dst.fill(0.0);
+                        }
+                    }
+                    if shared {
+                        site.key_proj
+                            .prepare_input(&fetched, &mut xh[i * prep..(i + 1) * prep]);
                     } else {
-                        dst.fill(0.0);
+                        let base = (s * seq + p) * d;
+                        site.key_proj.matvec(&fetched, &mut ks[base..base + d]);
+                        site.value_proj.matvec(&fetched, &mut vs[base..base + d]);
                     }
                 }
-                let base = (s * seq + p) * d;
-                site.key_proj.matvec(&fetched, &mut ks[base..base + d]);
-                site.value_proj.matvec(&fetched, &mut vs[base..base + d]);
+                if shared {
+                    let (lo, hi) = ((s * seq + c0) * d, (s * seq + c0 + b) * d);
+                    let xb = &xh[..b * prep];
+                    site.key_proj
+                        .matmul_rows_prepared(xb, b, 0, d, &mut ks[lo..hi], &mut acc);
+                    site.value_proj
+                        .matmul_rows_prepared(xb, b, 0, d, &mut vs[lo..hi], &mut acc);
+                }
             }
             let off = s * seq * d;
             if want_raw {
@@ -576,7 +663,7 @@ impl V3Model {
     /// length.
     pub fn forward_head(&self, tokens: &[u32], head: &ProbeHead) -> Vec<f32> {
         let mut pool = ProbePool::new(head, self.cfg.d_model);
-        self.forward_impl_pooled(tokens, None, None, Some(&mut pool));
+        self.forward_impl_pooled(tokens, None, None, Some(&mut pool), HeadRows::None);
         pool.finish()
     }
 
@@ -586,7 +673,7 @@ impl V3Model {
     /// after layer `i`, meaned over lanes. These are what the probe heads read.
     pub fn forward_cells(&self, tokens: &[u32]) -> Vec<f32> {
         let mut cells = Vec::new();
-        self.forward_impl(tokens, Some(&mut cells));
+        self.forward_impl_pooled(tokens, Some(&mut cells), None, None, HeadRows::None);
         cells
     }
 
@@ -605,10 +692,9 @@ impl V3Model {
         if tokens.is_empty() {
             return Vec::new();
         }
-        let rows = self.cfg.logit_rows();
-        let all = self.forward_impl_cached(tokens, None, Some(cache));
-        let last = tokens.len() - 1;
-        all[last * rows..(last + 1) * rows].to_vec()
+        // Only the last position's head row: each row is independent, so this is the same bits
+        // as computing all of them, without the 8192 x 768 head for every other position.
+        self.forward_impl_pooled(tokens, None, Some(cache), None, HeadRows::Last)
     }
 
     /// Clamp a token id into the embedding table.
@@ -624,16 +710,7 @@ impl V3Model {
     }
 
     fn forward_impl(&self, tokens: &[u32], cells: Option<&mut Vec<f32>>) -> Vec<f32> {
-        self.forward_impl_cached(tokens, cells, None)
-    }
-
-    fn forward_impl_cached(
-        &self,
-        tokens: &[u32],
-        cells: Option<&mut Vec<f32>>,
-        cache: Option<&mut V3Cache>,
-    ) -> Vec<f32> {
-        self.forward_impl_pooled(tokens, cells, cache, None)
+        self.forward_impl_pooled(tokens, cells, None, None, HeadRows::All)
     }
 
     fn forward_impl_pooled(
@@ -642,6 +719,7 @@ impl V3Model {
         mut cells: Option<&mut Vec<f32>>,
         mut cache: Option<&mut V3Cache>,
         mut pool: Option<&mut ProbePool<'_>>,
+        head_rows: HeadRows,
     ) -> Vec<f32> {
         let cfg = &self.cfg;
         let (seq, d, n) = (tokens.len(), cfg.d_model, cfg.mhc_lanes);
@@ -649,8 +727,12 @@ impl V3Model {
         let quantised = cache
             .as_deref()
             .is_some_and(|c| c.precision() == KvPrecision::Int8);
+        let p = prof::span(Op::ConvRope);
         let (rc, rs) = self.rope(seq);
+        drop(p);
+        let p = prof::span(Op::Engram);
         let (ek, ev, ev_raw) = self.engram_kv_with_raw(tokens, cache.is_some());
+        drop(p);
 
         // Lane stream: (seq, lanes, d_model).
         let l1 = cfg.num_layers + 1;
@@ -659,6 +741,7 @@ impl V3Model {
             c.resize(seq * l1 * d, 0.0);
         }
         let mut lanes = vec![0.0f32; seq * n * d];
+        let p_embed = prof::span(Op::Embed);
         let mut emb = vec![0.0f32; d];
         for (t, &tok) in tokens.iter().enumerate() {
             self.embedding
@@ -679,6 +762,8 @@ impl V3Model {
             }
         }
 
+        drop(p_embed);
+
         let dims = AttnDims {
             seq,
             num_heads: cfg.num_heads,
@@ -698,6 +783,12 @@ impl V3Model {
 
         let mut u = vec![0.0f32; seq * d];
         let mut bx = vec![0.0f32; seq * d];
+        let shared_prep = self.mhc.shares_preparation();
+        let (mut hpost_all, mut hres_all) = if shared_prep {
+            (vec![0.0f32; seq * n], vec![0.0f32; seq * n * n])
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let mut q = vec![0.0f32; seq * q_dim];
         let mut k = vec![0.0f32; seq * k_dim];
         let mut v = vec![0.0f32; seq * v_dim];
@@ -732,7 +823,10 @@ impl V3Model {
                 b_res: &self.mhc.b_res[li * n * n..(li + 1) * n * n],
             };
 
-            // Mix the lanes down to this layer's block input, per position.
+            // Mix the lanes down to this layer's block input, per position. The post and residual
+            // gates read the same lane norm (the lanes only change in the scatter below), so with
+            // a shared preparation they are computed here too and kept per position.
+            let p = prof::span(Op::Mhc);
             for t in 0..seq {
                 let lane_slice = &lanes[t * n * d..(t + 1) * n * d];
                 rms_unit_to(lane_slice, &mut nx);
@@ -740,6 +834,18 @@ impl V3Model {
                 self.mhc
                     .phi_pre
                     .matvec_rows_prepared(&nx_prep, li * n, &mut hpre);
+                if shared_prep {
+                    self.mhc.phi_post.matvec_rows_prepared(
+                        &nx_prep,
+                        li * n,
+                        &mut hpost_all[t * n..(t + 1) * n],
+                    );
+                    self.mhc.phi_res.matvec_rows_prepared(
+                        &nx_prep,
+                        li * n * n,
+                        &mut hres_all[t * n * n..(t + 1) * n * n],
+                    );
+                }
                 mix_down(
                     lane_slice,
                     &mut hpre,
@@ -751,7 +857,10 @@ impl V3Model {
                 );
             }
 
+            drop(p);
+
             // Engram gate, if this layer carries a site.
+            let p = prof::span(Op::Engram);
             bx.copy_from_slice(&u);
             if let Some(site) = cfg.engram.site_of(li) {
                 for t in 0..seq {
@@ -777,12 +886,16 @@ impl V3Model {
             // q, k, v and the gate all read the same activation with the same
             // group geometry, so the Hadamard preparation is paid once for all
             // four rather than four times.
+            drop(p);
+            let p = prof::span(Op::Qkv);
             let mut h = bx.clone();
             for t in 0..seq {
                 zc_rms_norm_vec(&mut h[t * d..(t + 1) * d], &layer.norm_in);
             }
+            drop(p);
             for c0 in (0..seq).step_by(chunk) {
                 let b = (seq - c0).min(chunk);
+                let p = prof::span(Op::Qkv);
                 for i in 0..b {
                     layer.q_proj.prepare_input(
                         &h[(c0 + i) * d..(c0 + i + 1) * d],
@@ -814,6 +927,8 @@ impl V3Model {
                     &mut v[c0 * v_dim..(c0 + b) * v_dim],
                     &mut acc,
                 );
+                drop(p);
+                let _p = prof::span(Op::GateOut);
                 layer.gate_proj.matmul_rows_prepared(
                     xb,
                     b,
@@ -824,6 +939,7 @@ impl V3Model {
                 );
             }
 
+            let p = prof::span(Op::ConvRope);
             // The conv runs in place, so the last few pre-conv vectors have to
             // be kept if the cache is going to continue from here.
             let (mut q_raw_tail, mut k_raw_tail, mut v_raw_tail) =
@@ -871,6 +987,9 @@ impl V3Model {
                 quant_rows(&mut v, seq, cfg.num_kv_heads, cfg.v_head_dim);
             }
 
+            drop(p);
+
+            let p = prof::span(Op::Attn);
             if let Some(c) = cache.as_deref_mut() {
                 // Post-conv, post-norm, post-rope keys and values: exactly what
                 // decode_step will attend against when it continues from here.
@@ -917,6 +1036,9 @@ impl V3Model {
             };
             attend(&q, kv_store, dims, cfg.attention_span(li), &mut attn);
 
+            drop(p);
+
+            let p = prof::span(Op::GateOut);
             let agate = sigmoid(layer.attn_gate);
             for t in 0..seq {
                 let a = &mut attn[t * o_dim..(t + 1) * o_dim];
@@ -944,7 +1066,9 @@ impl V3Model {
                     &mut acc,
                 );
             }
+            drop(p);
             for t in 0..seq {
+                let p = prof::span(Op::GateOut);
                 let proj = &mut projected[t * d..(t + 1) * d];
                 zc_rms_norm_vec(proj, &layer.post_norm);
 
@@ -953,6 +1077,8 @@ impl V3Model {
                 for (si, &pi) in s1.iter_mut().zip(proj.iter()) {
                     *si += agate * pi;
                 }
+                drop(p);
+                let _p = prof::span(Op::Mlp);
                 proj.copy_from_slice(s1);
                 zc_rms_norm_vec(proj, &layer.pre_hada);
                 hadamard_mlp(proj, &layer.mlp, &self.perms, cfg.hada_n, &mut mlp_out);
@@ -962,17 +1088,23 @@ impl V3Model {
             }
 
             // Scatter the block delta back across the lanes.
+            let p = prof::span(Op::Mhc);
             for t in 0..seq {
-                let lane_slice = &lanes[t * n * d..(t + 1) * n * d];
-                rms_unit_to(lane_slice, &mut nx);
-                self.mhc.phi_post.prepare_input(&nx, &mut nx_prep);
-                self.mhc
-                    .phi_post
-                    .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
-                self.mhc.phi_res.prepare_input(&nx, &mut nx_prep);
-                self.mhc
-                    .phi_res
-                    .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+                if shared_prep {
+                    hpost.copy_from_slice(&hpost_all[t * n..(t + 1) * n]);
+                    hres.copy_from_slice(&hres_all[t * n * n..(t + 1) * n * n]);
+                } else {
+                    let lane_slice = &lanes[t * n * d..(t + 1) * n * d];
+                    rms_unit_to(lane_slice, &mut nx);
+                    self.mhc.phi_post.prepare_input(&nx, &mut nx_prep);
+                    self.mhc
+                        .phi_post
+                        .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
+                    self.mhc.phi_res.prepare_input(&nx, &mut nx_prep);
+                    self.mhc
+                        .phi_res
+                        .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+                }
 
                 // y = block(u) - u
                 let mut y = vec![0.0f32; d];
@@ -995,6 +1127,8 @@ impl V3Model {
                     &mut scratch,
                 );
             }
+
+            drop(p);
 
             if cells.is_some() || pool.is_some() {
                 let mut cell = vec![0.0f32; d];
@@ -1030,10 +1164,19 @@ impl V3Model {
 
         // Mean over lanes, final norm, then the tied head — batched, because
         // at 8192 x 768 it is a fifth of the whole forward pass.
-        let mut logits = vec![0.0f32; seq * rows];
-        let mut pooled = vec![0.0f32; seq * d];
-        for t in 0..seq {
-            let out = &mut pooled[t * d..(t + 1) * d];
+        // Mean over lanes, final norm, then the tied head for the rows asked for: batched,
+        // because at 8192 x 768 it is a fifth of the whole forward pass per position.
+        let first = match head_rows {
+            HeadRows::All => 0,
+            HeadRows::Last => seq - 1,
+            HeadRows::None => return Vec::new(),
+        };
+        let _p_head = prof::span(Op::Head);
+        let cnt = seq - first;
+        let mut logits = vec![0.0f32; cnt * rows];
+        let mut pooled = vec![0.0f32; cnt * d];
+        for t in first..seq {
+            let out = &mut pooled[(t - first) * d..(t - first + 1) * d];
             for (c, o) in out.iter_mut().enumerate() {
                 let mut a = 0.0f32;
                 for lane in 0..n {
@@ -1045,9 +1188,9 @@ impl V3Model {
         }
 
         let lm_prep_len = self.embedding.prepared_len();
-        let mut lh = vec![0.0f32; chunk * lm_prep_len];
-        for c0 in (0..seq).step_by(chunk) {
-            let b = (seq - c0).min(chunk);
+        let mut lh = vec![0.0f32; chunk.min(cnt) * lm_prep_len];
+        for c0 in (0..cnt).step_by(chunk) {
+            let b = (cnt - c0).min(chunk);
             for i in 0..b {
                 self.embedding.prepare_input(
                     &pooled[(c0 + i) * d..(c0 + i + 1) * d],
@@ -1067,6 +1210,18 @@ impl V3Model {
         }
         logits
     }
+}
+
+/// Which positions' logits a forward pass computes. Each row is independent of the others, so
+/// any subset is the same bits as the full set.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeadRows {
+    /// Every position (`forward_sequence`).
+    All,
+    /// The last position only (`prefill`).
+    Last,
+    /// None: the caller reads cells or a probe pool.
+    None,
 }
 
 /// The last `n` rows of a `(seq, dim)` buffer, oldest first, zero-padded at the

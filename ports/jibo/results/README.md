@@ -6,6 +6,7 @@ One file per run. The label in each file name is the evidence level:
 | --- | --- |
 | `host-reference-` | x86_64, this source, pinned model, 1 thread. Timings order configurations; they are not Jibo numbers. |
 | `emulated-arm-` | The ARMv7 binaries under qemu-arm 8.2.2 against the glibc 2.21 stand-in sysroot. Correctness only: no speed claims. |
+| `emulated-arm-perf-` | `perfvm/bench.sh`: the ARMv7 binaries in full-system qemu with `-icount shift=0`, reading the emulated PMU. Exact, repeatable user-space instruction counts per workload and operation; instructions, not time (a Cortex-A15's cycles per instruction differ by kind). |
 | `software-rendered-gl-` | Mesa llvmpipe (GL 4.5 core) under Xvfb. Correctness only. |
 | `official-native-emulated-` | Cactus-Compute's `linux-armv7/needle` under qemu with a modern armhf glibc (it cannot load on Jibo). Its own serving policy. |
 | `robot-` | Physical Jibo, written by `scripts/robot-run.sh`. None yet. |

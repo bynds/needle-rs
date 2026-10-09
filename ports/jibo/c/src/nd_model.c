@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "nd_math.h"
+#include "nd_prof.h"
 #include "nd_model.h"
 
 #define EPS 1e-6f
@@ -83,11 +84,10 @@ static void mix_down(const nd_model *m, const float *lanes_buf, float *h, size_t
   size_t n = m->cfg.mhc_lanes, d = m->cfg.d_model, lane, c;
   for (lane = 0; lane < n; lane++)
     h[lane] = sigmoid(m->a_pre[li] * h[lane] + m->b_pre[li * n + lane] + pre_off(li, lane, n));
-  for (c = 0; c < d; c++) {
-    float acc = 0.0f;
-    for (lane = 0; lane < n; lane++) acc += h[lane] * lanes_buf[lane * d + c];
-    u[c] = acc;
-  }
+  /* Lane-outer over whole rows: the same additions from 0 in lane order for every c, with long
+   * inner loops (mhc.rs does the same). */
+  for (c = 0; c < d; c++) u[c] = 0.0f;
+  for (lane = 0; lane < n; lane++) nd_axpy(u, h[lane], lanes_buf + lane * d, d);
 }
 
 static void scatter_up(const nd_model *m, float *lanes_buf, float *hpost, float *hres, const float *y, size_t li,
@@ -101,11 +101,9 @@ static void scatter_up(const nd_model *m, float *lanes_buf, float *hpost, float 
   for (i = 0; i < n; i++) {
     float *out = lanes_buf + i * d;
     float hp = hpost[i];
-    for (c = 0; c < d; c++) {
-      float acc = 0.0f;
-      for (j = 0; j < n; j++) acc += hres[i * n + j] * scratch[j * d + c];
-      out[c] = acc + hp * y[c];
-    }
+    for (c = 0; c < d; c++) out[c] = 0.0f;
+    for (j = 0; j < n; j++) nd_axpy(out, hres[i * n + j], scratch + j * d, d);
+    nd_axpy(out, hp, y, d);
   }
 }
 
@@ -185,7 +183,7 @@ static void engram_fetch(const nd_model *m, const nd_engram_site *site, const ui
 
 /* ---- kernels.rs: the learned Kronecker MLP ---- */
 static void kron_apply(const float *z, const float *a, const float *b, size_t ba, size_t bb, float *out, float *t) {
-  size_t i, k, j, l;
+  size_t i, k, j;
   memset(t, 0, ba * bb * sizeof(float));
   for (i = 0; i < ba; i++) {
     const float *zi = z + i * bb, *ai = a + i * ba;
@@ -194,7 +192,7 @@ static void kron_apply(const float *z, const float *a, const float *b, size_t ba
       float *tk;
       if (aik == 0.0f) continue;
       tk = t + k * bb;
-      for (j = 0; j < bb; j++) tk[j] += zi[j] * aik;
+      nd_axpy(tk, aik, zi, bb);
     }
   }
   for (k = 0; k < ba; k++) {
@@ -206,7 +204,7 @@ static void kron_apply(const float *z, const float *a, const float *b, size_t ba
       const float *bj;
       if (tkj == 0.0f) continue;
       bj = b + j * bb;
-      for (l = 0; l < bb; l++) ok[l] += tkj * bj[l];
+      nd_axpy(ok, tkj, bj, bb);
     }
   }
 }
@@ -241,7 +239,7 @@ static void hadamard_mlp(const nd_model *m, const float *x, const nd_hmlp *w, fl
     const float *row;
     if (pj == 0.0f) continue;
     row = w->cond_u + j * hn;
-    for (c = 0; c < hn; c++) s->cond[c] += pj * row[c];
+    nd_axpy(s->cond, pj, row, hn);
   }
   memset(s->z, 0, hn * sizeof(float));
   memcpy(s->z, x, d * sizeof(float));
@@ -310,7 +308,7 @@ static float kv_dot(const kv_view *kv, const float *q, size_t off, size_t len, s
 static void kv_accum(const kv_view *kv, float w, size_t off, float *out, size_t n, size_t sat) {
   size_t i;
   if (kv->v) {
-    for (i = 0; i < n; i++) out[i] += w * kv->v[off + i];
+    nd_axpy(out, w, kv->v + off, n);
     return;
   }
   w = w * kv->vs[sat];
@@ -821,6 +819,15 @@ static size_t clamp_token(const nd_model *m, uint32_t tok) {
 
 /* ---- the batched forward (forward_impl_pooled) ----
  * logits: NULL, or (want_all ? seq : 1) x rows. cells: NULL or (seq, L+1, d). */
+/* Whether the three mHC gate projections take the same prepared input (same width and group),
+ * so one lane norm and one Hadamard preparation serve all three: the lanes only change in
+ * scatter_up, after all three are read. */
+static int phi_shared(const nd_model *m) {
+  const nd_cq *a = &m->phi_pre, *b = &m->phi_post, *c = &m->phi_res;
+  return a->in_feat == b->in_feat && a->in_feat == c->in_feat && a->group == b->group && a->group == c->group &&
+         a->in_padded == b->in_padded && a->in_padded == c->in_padded;
+}
+
 static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float *cells, nd_cache *cache,
                    probe_pool *pool, float *logits, int want_all) {
   const nd_cfg *cfg = &m->cfg;
@@ -835,7 +842,8 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
   /* All buffers in one list, freed together. */
   float *rc_, *rs_, *ek, *ev, *evraw = NULL, *lanes, *emb, *nx, *nxp, *hpre, *hpost, *hres, *scratch, *u, *bx, *h;
   float *q, *k, *v, *attn, *gates, *xh, *oh, *proj, *acc, *mlpo, *y, *fetched, *row, *scores, *pooled, *lh, *cell;
-  float *qt = NULL, *kt = NULL, *vt = NULL;
+  float *qt = NULL, *kt = NULL, *vt = NULL, *hpost_all = NULL, *hres_all = NULL;
+  int shared = phi_shared(m);
   int8_t *kq = NULL, *vq = NULL;
   float *ksc = NULL, *vsc = NULL;
   uint32_t *idx;
@@ -881,6 +889,10 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
   A(y, d, sizeof(float));
   A(scores, seq, sizeof(float));
   A(cell, d, sizeof(float));
+  if (shared) {
+    A(hpost_all, seq * n, sizeof(float));
+    A(hres_all, seq * n * n, sizeof(float));
+  }
   A(ms.proj, 1024, sizeof(float));
   A(ms.cond, cfg->hada_n, sizeof(float));
   A(ms.z, cfg->hada_n, sizeof(float));
@@ -898,22 +910,42 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
     A(vsc, seq * KV, sizeof(float));
   }
 
+  ND_PB(ND_P_CONV_ROPE);
   rope_tables(cfg, 0, seq, rc_, rs_);
+  ND_PE();
 
   /* Engram keys and values (engram_kv_with_raw) */
+  ND_PB(ND_P_ENGRAM);
   engram_indices(cfg, tokens, seq, idx);
+  /* Key and value projections batched over chunks of positions, as the block's Q/K/V are (the
+   * matmul is bit-identical to a matvec per position, and decodes each weight group once per
+   * chunk); one preparation of the fetched rows serves both when their geometry matches. */
   for (s = 0; s < ns; s++) {
     const nd_engram_site *site = &m->engrams[s];
-    for (t = 0; t < seq; t++) {
-      size_t base = (s * seq + t) * d;
-      engram_fetch(m, site, idx + t * nt, t, fetched, row);
-      if (nd_cq_matvec(&site->key_proj, fetched, ek + base) || nd_cq_matvec(&site->value_proj, fetched, ev + base))
-        goto out;
+    const nd_cq *kp = &site->key_proj, *vp = &site->value_proj;
+    int kv_shared = kp->in_feat == vp->in_feat && kp->group == vp->group && kp->in_padded == vp->in_padded &&
+                 kp->in_padded <= prep;
+    for (c0 = 0; c0 < seq; c0 += chunk) {
+      size_t b = seq - c0 < chunk ? seq - c0 : chunk;
+      for (i = 0; i < b; i++) {
+        size_t base = (s * seq + c0 + i) * d;
+        engram_fetch(m, site, idx + (c0 + i) * nt, c0 + i, fetched, row);
+        if (kv_shared)
+          nd_cq_prepare(kp, fetched, xh + i * kp->in_padded);
+        else if (nd_cq_matvec(kp, fetched, ek + base) || nd_cq_matvec(vp, fetched, ev + base))
+          goto out;
+      }
+      if (kv_shared) {
+        nd_cq_matmul_rows_prepared(kp, xh, b, 0, d, ek + (s * seq + c0) * d, acc);
+        nd_cq_matmul_rows_prepared(vp, xh, b, 0, d, ev + (s * seq + c0) * d, acc);
+      }
     }
     if (evraw) memcpy(evraw + s * seq * d, ev + s * seq * d, seq * d * sizeof(float));
     value_conv(cfg, ev + s * seq * d, site->taps, seq);
   }
+  ND_PE();
 
+  ND_PB(ND_P_EMBED);
   for (t = 0; t < seq; t++) {
     nd_cq_dequantize_row(&m->embedding, clamp_token(m, tokens[t]), emb);
     for (i = 0; i < d; i++) emb[i] *= m->embed_scale;
@@ -921,6 +953,7 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
     if (pool) pool_observe(pool, 0, emb);
     for (lane = 0; lane < n; lane++) memcpy(lanes + (t * n + lane) * d, emb, d * sizeof(float));
   }
+  ND_PE();
 
   for (li = 0; li < L; li++) {
     const nd_layer *ly = &m->layers[li];
@@ -931,27 +964,42 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
         site = s;
         break;
       }
+    ND_PB(ND_P_MHC);
     for (t = 0; t < seq; t++) {
       const float *ls = lanes + t * n * d;
       rms_unit_to(ls, nx, n * d);
       nd_cq_prepare(&m->phi_pre, nx, nxp);
       nd_cq_matvec_rows_prepared(&m->phi_pre, nxp, li * n, n, hpre);
+      if (shared) {
+        nd_cq_matvec_rows_prepared(&m->phi_post, nxp, li * n, n, hpost_all + t * n);
+        nd_cq_matvec_rows_prepared(&m->phi_res, nxp, li * n * n, n * n, hres_all + t * n * n);
+      }
       mix_down(m, ls, hpre, li, u + t * d);
     }
+    ND_PE();
+    ND_PB(ND_P_ENGRAM);
     memcpy(bx, u, seq * d * sizeof(float));
     if (site != (size_t)-1)
       for (t = 0; t < seq; t++) apply_site(bx + t * d, ek + (site * seq + t) * d, ev + (site * seq + t) * d, d);
+    ND_PE();
 
+    ND_PB(ND_P_QKV);
     memcpy(h, bx, seq * d * sizeof(float));
     for (t = 0; t < seq; t++) zc_rms_norm(h + t * d, ly->norm_in, d);
+    ND_PE();
     for (c0 = 0; c0 < seq; c0 += chunk) {
       size_t b = seq - c0 < chunk ? seq - c0 : chunk;
+      ND_PB(ND_P_QKV);
       for (i = 0; i < b; i++) nd_cq_prepare(&ly->q_proj, h + (c0 + i) * d, xh + i * prep);
       nd_cq_matmul_rows_prepared(&ly->q_proj, xh, b, 0, qd, q + c0 * qd, acc);
       nd_cq_matmul_rows_prepared(&ly->k_proj, xh, b, 0, kd, k + c0 * kd, acc);
       nd_cq_matmul_rows_prepared(&ly->v_proj, xh, b, 0, vd, v + c0 * vd, acc);
+      ND_PE();
+      ND_PB(ND_P_GATE_OUT);
       nd_cq_matmul_rows_prepared(&ly->gate_proj, xh, b, 0, od, gates + c0 * od, acc);
+      ND_PE();
     }
+    ND_PB(ND_P_CONV_ROPE);
     if (cache && tail) {
       last_rows(q, seq, qd, tail, qt);
       last_rows(k, seq, kd, tail, kt);
@@ -969,6 +1017,8 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
       quant_rows(k, seq * KV, qk);
       quant_rows(v, seq * KV, vh);
     }
+    ND_PE();
+    ND_PB(ND_P_ATTN);
     if (cache) {
       for (t = 0; t < seq; t++)
         if (write_kv(cache, li, t, k + t * kd, v + t * vd)) goto out;
@@ -994,6 +1044,8 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
       }
       attend(cfg, q, &kv, seq, span_of(cfg, li), attn, scores);
     }
+    ND_PE();
+    ND_PB(ND_P_GATE_OUT);
     agate = sigmoid(ly->attn_gate);
     for (t = 0; t < seq; t++)
       for (i = 0; i < od; i++) attn[t * od + i] *= sigmoid(gates[t * od + i]);
@@ -1002,25 +1054,37 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
       for (i = 0; i < b; i++) nd_cq_prepare(&ly->out_proj, attn + (c0 + i) * od, oh + i * oprep);
       nd_cq_matmul_rows_prepared(&ly->out_proj, oh, b, 0, d, proj + c0 * d, acc);
     }
+    ND_PE();
     for (t = 0; t < seq; t++) {
       float *pr = proj + t * d, *s1 = bx + t * d;
+      ND_PB(ND_P_GATE_OUT);
       zc_rms_norm(pr, ly->post_norm, d);
       for (i = 0; i < d; i++) s1[i] += agate * pr[i];
+      ND_PE();
+      ND_PB(ND_P_MLP);
       memcpy(pr, s1, d * sizeof(float));
       zc_rms_norm(pr, ly->pre_hada, d);
       hadamard_mlp(m, pr, &ly->mlp, mlpo, &ms);
       for (i = 0; i < d; i++) s1[i] += mlpo[i];
+      ND_PE();
     }
+    ND_PB(ND_P_MHC);
     for (t = 0; t < seq; t++) {
       float *ls = lanes + t * n * d;
-      rms_unit_to(ls, nx, n * d);
-      nd_cq_prepare(&m->phi_post, nx, nxp);
-      nd_cq_matvec_rows_prepared(&m->phi_post, nxp, li * n, n, hpost);
-      nd_cq_prepare(&m->phi_res, nx, nxp);
-      nd_cq_matvec_rows_prepared(&m->phi_res, nxp, li * n * n, n * n, hres);
+      if (shared) {
+        memcpy(hpost, hpost_all + t * n, n * sizeof(float));
+        memcpy(hres, hres_all + t * n * n, n * n * sizeof(float));
+      } else {
+        rms_unit_to(ls, nx, n * d);
+        nd_cq_prepare(&m->phi_post, nx, nxp);
+        nd_cq_matvec_rows_prepared(&m->phi_post, nxp, li * n, n, hpost);
+        nd_cq_prepare(&m->phi_res, nx, nxp);
+        nd_cq_matvec_rows_prepared(&m->phi_res, nxp, li * n * n, n * n, hres);
+      }
       for (c = 0; c < d; c++) y[c] = bx[t * d + c] - u[t * d + c];
       scatter_up(m, ls, hpost, hres, y, li, scratch);
     }
+    ND_PE();
     if (cells || pool)
       for (t = 0; t < seq; t++) {
         for (c = 0; c < d; c++) {
@@ -1044,6 +1108,7 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
       for (s = 0; s < ns; s++) last_rows(evraw + s * seq * d, seq, d, reach, cache->engram_tail[s]);
   }
 
+  if (logits) ND_PB(ND_P_HEAD);
   if (logits) {
     size_t first = want_all ? 0 : seq - 1, cnt = seq - first;
     A(pooled, cnt * d, sizeof(float));
@@ -1063,6 +1128,7 @@ static int forward(const nd_model *m, const uint32_t *tokens, size_t seq, float 
       nd_cq_matmul_rows_prepared(&m->embedding, lh, b, 0, rows, logits + c0 * rows, acc);
     }
   }
+  ND_PE();
   rc = ND_OK;
 out:
   for (i = 0; i < na; i++) free(all[i]);
@@ -1109,7 +1175,7 @@ int nd_decode_step(const nd_model *m, nd_cache *cache, uint32_t token, float *lo
   mlp_scratch ms;
   void *all[48];
   size_t na = 0, nh;
-  int rc = ND_E_NOMEM;
+  int rc = ND_E_NOMEM, shared = phi_shared(m);
 #define A(p, cnt, sz)                     \
   do {                                    \
     all[na++] = (p) = nd_calloc((cnt), (sz)); \
@@ -1152,6 +1218,7 @@ int nd_decode_step(const nd_model *m, nd_cache *cache, uint32_t token, float *lo
   A(ms.buf, cfg->hada_n, sizeof(float));
   A(ms.t, cfg->hada_n, sizeof(float));
 
+  ND_PB(ND_P_ENGRAM);
   push_token(cache, token);
   nh = cache->ntok;
   memcpy(hist, cache->tokens, nh * sizeof(uint32_t));
@@ -1164,10 +1231,13 @@ int nd_decode_step(const nd_model *m, nd_cache *cache, uint32_t token, float *lo
       goto out;
     engram_conv_step(cache, s, site->taps, ev + s * d, tmp);
   }
+  ND_PE();
+  ND_PB(ND_P_EMBED);
 
   nd_cq_dequantize_row(&m->embedding, clamp_token(m, token), emb);
   for (i = 0; i < d; i++) emb[i] *= m->embed_scale;
   for (lane = 0; lane < n; lane++) memcpy(lanes + lane * d, emb, d * sizeof(float));
+  ND_PE();
   rope_tables(cfg, pos, 1, rc_, rs_);
 
   for (li = 0; li < L; li++) {
@@ -1180,16 +1250,27 @@ int nd_decode_step(const nd_model *m, nd_cache *cache, uint32_t token, float *lo
         site = s;
         break;
       }
+    ND_PB(ND_P_MHC);
     rms_unit_to(lanes, nx, n * d);
     nd_cq_prepare(&m->phi_pre, nx, nxp);
     nd_cq_matvec_rows_prepared(&m->phi_pre, nxp, li * n, n, hpre);
+    if (shared) {
+      nd_cq_matvec_rows_prepared(&m->phi_post, nxp, li * n, n, hpost);
+      nd_cq_matvec_rows_prepared(&m->phi_res, nxp, li * n * n, n * n, hres);
+    }
     mix_down(m, lanes, hpre, li, u);
+    ND_PE();
+    ND_PB(ND_P_ENGRAM);
     memcpy(bx, u, d * sizeof(float));
     if (site != (size_t)-1) apply_site(bx, ek + site * d, ev + site * d, d);
+    ND_PE();
+    ND_PB(ND_P_QKV);
     memcpy(hh, bx, d * sizeof(float));
     zc_rms_norm(hh, ly->norm_in, d);
     if (nd_cq_matvec(&ly->q_proj, hh, q) || nd_cq_matvec(&ly->k_proj, hh, k) || nd_cq_matvec(&ly->v_proj, hh, v))
       goto out;
+    ND_PE();
+    ND_PB(ND_P_CONV_ROPE);
     if (cfg->qkv_conv_taps) {
       conv_step(cache, li, 0, ly->q_taps, q, qd, tmp);
       conv_step(cache, li, 1, ly->k_taps, k, kd, tmp);
@@ -1198,29 +1279,41 @@ int nd_decode_step(const nd_model *m, nd_cache *cache, uint32_t token, float *lo
     norm_and_rope(q, ly->q_norm, rc_, rs_, 1, H, qk);
     norm_and_rope(k, ly->k_norm, rc_, rs_, 1, KV, qk);
     if (cache->prec == ND_KV_INT8) quant_rows(q, H, qk);
+    ND_PE();
+    ND_PB(ND_P_ATTN);
     if (write_kv(cache, li, pos, k, v)) goto out;
     cache_span(cache, li, pos, &lo, &hi);
     kv = cache_kv(cache, li);
     attend_step(cfg, q, &kv, cache->layers[li].slots, lo, hi, attn, scores);
+    ND_PE();
+    ND_PB(ND_P_GATE_OUT);
     if (nd_cq_matvec(&ly->gate_proj, hh, gate)) goto out;
     for (i = 0; i < od; i++) attn[i] *= sigmoid(gate[i]);
     if (nd_cq_matvec(&ly->out_proj, attn, proj)) goto out;
     zc_rms_norm(proj, ly->post_norm, d);
     agate = sigmoid(ly->attn_gate);
     for (i = 0; i < d; i++) bx[i] += agate * proj[i];
+    ND_PE();
+    ND_PB(ND_P_MLP);
     memcpy(proj, bx, d * sizeof(float));
     zc_rms_norm(proj, ly->pre_hada, d);
     hadamard_mlp(m, proj, &ly->mlp, mlpo, &ms);
     for (i = 0; i < d; i++) bx[i] += mlpo[i];
+    ND_PE();
+    ND_PB(ND_P_MHC);
     for (c = 0; c < d; c++) y[c] = bx[c] - u[c];
-    rms_unit_to(lanes, nx, n * d);
-    nd_cq_prepare(&m->phi_post, nx, nxp);
-    nd_cq_matvec_rows_prepared(&m->phi_post, nxp, li * n, n, hpost);
-    nd_cq_prepare(&m->phi_res, nx, nxp);
-    nd_cq_matvec_rows_prepared(&m->phi_res, nxp, li * n * n, n * n, hres);
+    if (!shared) {
+      rms_unit_to(lanes, nx, n * d);
+      nd_cq_prepare(&m->phi_post, nx, nxp);
+      nd_cq_matvec_rows_prepared(&m->phi_post, nxp, li * n, n, hpost);
+      nd_cq_prepare(&m->phi_res, nx, nxp);
+      nd_cq_matvec_rows_prepared(&m->phi_res, nxp, li * n * n, n * n, hres);
+    }
     scatter_up(m, lanes, hpost, hres, y, li, scratch);
+    ND_PE();
   }
   cache->pos++;
+  ND_PB(ND_P_HEAD);
   for (c = 0; c < d; c++) {
     float a = 0.0f;
     for (lane = 0; lane < n; lane++) a += lanes[lane * d + c];
@@ -1229,6 +1322,7 @@ int nd_decode_step(const nd_model *m, nd_cache *cache, uint32_t token, float *lo
   zc_rms_norm(x, m->final_norm, d);
   nd_cq_prepare(&m->embedding, x, lmp);
   nd_cq_matvec_rows_prepared(&m->embedding, lmp, 0, rows, logits);
+  ND_PE();
   rc = ND_OK;
 out:
   for (i = 0; i < na; i++) free(all[i]);

@@ -282,6 +282,59 @@ auto-vectorise f32 for ARMv7 NEON (it is not IEEE: denormals flush), and stable 
 ARM32 NEON intrinsics. The CQ kernels, about two thirds of the instructions, are the first CPU
 target; `backend/` has bit-identical NEON versions ready to time.
 
+## Performance work: both engines, exact ARMv7 instruction counts
+
+`perfvm/` measures both engines on Jibo's instruction set without a robot. It runs the ARMv7
+binaries in full-system qemu with `-icount`, so the emulated PMU's instruction count is exact and
+repeatable. Each engine carries matching per-operation spans (needle-core `prof.rs`, C
+`nd_prof.h`; opt-in, compiled out otherwise). `perfvm/bench.sh` runs the same three workloads on
+both engines, plain (VFPv3-D16, as shipped) and NEON: a 113-token prefill, 8 decode steps, and a
+tool-prefix cache hit. Each change below was kept only if every bit-parity gate still held: the C
+and Rust traces on x86 and ARMv7, plain and NEON, and the C99 gates.
+
+**Measured (perfvm), instructions:**
+
+| Build | Prefill: before → now | Decode, 8 steps: before → now |
+|---|---|---|
+| Rust plain | 35.3 G → 26.6 G (−25%) | 3.01 G → 2.76 G (−8%) |
+| C plain | 47.5 G → 25.7 G (−46%) | 2.49 G → 2.36 G (−5%) |
+| Rust NEON | 15.6 G → 9.7 G (−38%)\* | 1.51 G → 1.13 G (−25%)\* |
+| C NEON | 17.9 G → 9.4 G (−48%)\* | 1.65 G → 1.11 G (−33%)\* |
+
+\* The first NEON measurement already includes the first three changes below.
+`results/emulated-arm-perf-*.jsonl` has every operation.
+
+Each engine taught the other something:
+
+- **C → Rust: compute only the head rows that are used.** Rust's prefill ran the 8192 × 768
+  logits head for every prompt position and kept the last; `forward_head` (confidence scoring)
+  and `forward_cells` ran it for every position and kept none. They now compute the last row or
+  none. Head cost in prefill fell 98%.
+- **C → Rust: register lanes on 32-bit ARM.** The C kernels' eight named accumulators beat
+  LLVM's code for the staged lane arrays in the plain build: −5.6% on the 2-bit projections. The
+  same change cost the 4-bit head 3.9%, so that case is being revisited.
+- **Rust → C: the same, the other way.** GCC did not keep lane arrays in registers anywhere.
+  The C batched matmul used 1.9× Rust's instructions until it got named locals and an unrolled,
+  per-width LUT decode: C prefill −42% in one step.
+- **Rust → C: Rust's NEON assembly.** GCC compiles the arm_neon.h intrinsics for the eight-lane
+  loops to 11 instructions per step against the asm's 7. C now uses Rust's exact kernels as
+  `__asm__`: C NEON prefill −23%.
+- **Both: one lane norm for three gates.** The mHC post and residual gates read the same
+  normalised lanes as the pre gate, but each recomputed the norm and the Hadamard preparation.
+  One now serves all three: mHC −29 to −42%.
+- **Both: loop interchange and a shared NEON `axpy`.** mHC mixing, the Kronecker MLP stages and
+  attention's accumulate were all "add a scaled row" in disguise. Interchanged to whole-row
+  loops (each element keeps its additions in the same order), they share one `axpy` kernel,
+  NEON in both languages and unrolled in plain C: MLP −65% and attention −45 to −55% on NEON.
+- **Both: batched Engram projections.** The Engram key and value projections ran a matvec per
+  position, each preparing the same input. They now use the batched matmul (bit-identical by
+  construction) with one shared preparation: Engram −11 to −34%.
+
+Every change keeps the bits. The batched and per-position paths sum in the same lane order;
+interchanged loops keep each element's additions in order; NEON's VMLA rounds the product and
+the sum separately, as the scalar code does. The one exception is the existing NEON caveat:
+NEON flushes subnormals to zero.
+
 ## Findings that change how Needle is used
 
 1. **A query ending in an emoji killed the process** (upstream engine, fixed here). Byte-fallback

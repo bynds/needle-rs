@@ -58,6 +58,11 @@ void nd_cq_matmul_rows_prepared(const nd_cq *w, const float *xh, size_t batch, s
 /* Row o of the dequantised matrix, in_feat floats (inverse rotation applied). */
 void nd_cq_dequantize_row(const nd_cq *w, size_t o, float *out);
 
+/* y[i] += a * x[i] for i < n: one product and one sum per element, in element order (any split
+ * of the work is the same bits). NEON builds do eight elements per step with needle-core's axpy8
+ * kernel; y and x must not overlap. */
+void nd_axpy(float *y, float a, const float *x, size_t n);
+
 /* The normalised Walsh-Hadamard transform in place, n a power of two (hadamard.rs). */
 void nd_fwht_normalized(float *x, size_t n);
 

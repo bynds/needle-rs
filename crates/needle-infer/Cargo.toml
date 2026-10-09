@@ -21,9 +21,17 @@ default = []
 # needle-wasm and embedded consumers are unaffected; native front ends enable it.
 parallel = ["needle-core/parallel"]
 neon = ["needle-core/neon"]
+# Per-operation cost accounting for examples/v3_profile.rs (needle-core/src/prof.rs).
+profile = ["needle-core/profile"]
 
 [dependencies]
 needle-core = { path = "../needle-core", version = "0.3.1" }
 
 [dev-dependencies]
 serde_json = "1"
+# examples/v3_profile.rs reads the PMU through perf_event_open.
+libc = "0.2"
+
+[[example]]
+name = "v3_profile"
+required-features = ["profile"]

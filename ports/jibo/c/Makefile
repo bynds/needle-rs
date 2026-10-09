@@ -29,5 +29,9 @@ $(OUT)/needle-jibo-c: $(OUT)/obj/main.o $(OUT)/libnd.a
 $(OUT)/test_%: tests/test_%.c $(OUT)/libnd.a
 	$(CC) $(ALL_CFLAGS) -Isrc -o $@ $^ $(LDLIBS)
 
+# Benchmarks (tests/bench_*.c); per-operation numbers need CFLAGS="-O2 -DND_PROFILE".
+$(OUT)/bench_%: tests/bench_%.c $(OUT)/libnd.a
+	$(CC) $(ALL_CFLAGS) -Isrc -o $@ $^ $(LDLIBS)
+
 clean:
 	rm -rf $(OUT)

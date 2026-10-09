@@ -20,6 +20,9 @@ std = []        # opt-in: enables std (for benchmarks/tests only)
 # downclocks this machine by ~1.5x, so ratios taken across separate runs are not
 # trustworthy. Not for production use.
 bench-internals = []
+# Per-operation cost accounting (prof.rs): spans that read a caller-supplied clock. Off, they
+# compile to nothing.
+profile = []
 # Splits large matvec/matmul row ranges across a rayon pool. Implies std, so it
 # is off for WASM and embedded. Row splitting does not change any individual
 # row's arithmetic, so results stay bit-identical to the serial path.

@@ -92,12 +92,12 @@ pub fn mix_down(
     for (lane, h) in phi_pre_rows.iter_mut().enumerate() {
         *h = sigmoid(m.a_pre * *h + m.b_pre[lane] + pre_off(layer, lane, lanes));
     }
-    for (c, uc) in u.iter_mut().enumerate() {
-        let mut acc = 0.0f32;
-        for (lane, &h) in phi_pre_rows.iter().enumerate() {
-            acc += h * lanes_buf[lane * d_model + c];
-        }
-        *uc = acc;
+    // u[c] = Σ_lane h[lane] · lanes[lane][c], accumulated from 0 in lane order. Lane-outer: the
+    // same additions in the same order for every c, over whole rows, so no bounds check sits in
+    // the inner loop (it measured about a third of mHC's instructions on ARMv7).
+    u.fill(0.0);
+    for (&h, row) in phi_pre_rows.iter().zip(lanes_buf.chunks_exact(d_model)) {
+        crate::kernels::axpy(u, h, row);
     }
 }
 
@@ -138,16 +138,18 @@ pub fn scatter_up(
     sinkhorn(phi_res_rows, lanes);
 
     scratch.copy_from_slice(lanes_buf);
-    for i in 0..lanes {
-        let out = &mut lanes_buf[i * d_model..(i + 1) * d_model];
+    // out[c] = (Σ_j res[i][j] · scratch[j][c]) + hp · y[c], the sum from 0 in j order: j-outer
+    // over whole rows, the same additions in the same order (see mix_down).
+    for (i, out) in lanes_buf.chunks_exact_mut(d_model).enumerate() {
         let hp = phi_post_rows[i];
-        for (c, o) in out.iter_mut().enumerate() {
-            let mut acc = 0.0f32;
-            for j in 0..lanes {
-                acc += phi_res_rows[i * lanes + j] * scratch[j * d_model + c];
-            }
-            *o = acc + hp * y[c];
+        out.fill(0.0);
+        for (&r, src) in phi_res_rows[i * lanes..(i + 1) * lanes]
+            .iter()
+            .zip(scratch.chunks_exact(d_model))
+        {
+            crate::kernels::axpy(out, r, src);
         }
+        crate::kernels::axpy(out, hp, y);
     }
 }
 

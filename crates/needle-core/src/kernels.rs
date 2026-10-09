@@ -13,6 +13,41 @@ pub const EPS: f32 = 1e-6;
 /// Sinkhorn iterations upstream runs.
 pub const SINKHORN_ITERS: usize = 20;
 
+/// `y[i] += a * x[i]`: one product and one sum per element, in element order, so any split of
+/// the work is the same bits. ARMv7 NEON builds (feature `neon`) do eight elements per step with
+/// `cq_neon::axpy8` (the C port's `nd_axpy` is the same kernel), the rest as written here.
+#[inline]
+pub fn axpy(y: &mut [f32], a: f32, x: &[f32]) {
+    let n = y.len().min(x.len());
+    #[allow(unused_mut)]
+    let mut done = 0;
+    #[cfg(all(target_arch = "arm", feature = "neon"))]
+    if n >= 8 {
+        // Safety: both slices hold at least `n` elements and are distinct borrows.
+        unsafe { crate::cq_neon::axpy8(y.as_mut_ptr(), a, x.as_ptr(), n / 8) };
+        done = n / 8 * 8;
+    }
+    // ARMv7 without NEON: unrolled by four, as the C port's nd_axpy (LLVM keeps this loop rolled
+    // for 32-bit ARM, and the loop overhead was most of each step).
+    #[cfg(all(target_arch = "arm", not(feature = "neon")))]
+    {
+        let m = (n - done) / 4 * 4;
+        for (yy, xx) in y[done..done + m]
+            .chunks_exact_mut(4)
+            .zip(x[done..done + m].chunks_exact(4))
+        {
+            yy[0] += a * xx[0];
+            yy[1] += a * xx[1];
+            yy[2] += a * xx[2];
+            yy[3] += a * xx[3];
+        }
+        done += m;
+    }
+    for (yi, &xi) in y[done..n].iter_mut().zip(&x[done..n]) {
+        *yi += a * xi;
+    }
+}
+
 /// `decode._rms_unit` — RMS normalisation with no learned scale.
 ///
 /// Distinct from [`crate::norm::zc_rms_norm_vec`], which applies `(1 + γ)`.

@@ -297,6 +297,7 @@ dependencies = [
 name = "needle-infer"
 version = "0.3.1"
 dependencies = [
+ "libc",
  "needle-core",
  "serde_json",
 ]

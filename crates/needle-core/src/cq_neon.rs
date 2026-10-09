@@ -139,6 +139,35 @@ pub(crate) unsafe fn lut2_lanes(
     out
 }
 
+/// `y[i] += a * x[i]` for `8 * chunks` elements, two q registers at a time.
+///
+/// Each element gets its own product, rounded, and its own sum, as the scalar loop computes it
+/// (VMLA is not fused; the product `x * a` equals `a * x` exactly), so this is the scalar result
+/// but for NEON's flush of subnormals to zero.
+///
+/// # Safety
+/// `y` and `x` must each be valid for `8 * chunks` elements and must not overlap; `chunks >= 1`.
+#[inline]
+pub(crate) unsafe fn axpy8(y: *mut f32, a: f32, x: *const f32, chunks: usize) {
+    core::arch::asm!(
+        "vdup.32 q14, {a}",
+        "2:",
+        "vld1.32 {{d16-d19}}, [{x}]!",
+        "vld1.32 {{d20-d23}}, [{y}]",
+        "vmla.f32 q10, q8, q14",
+        "vmla.f32 q11, q9, q14",
+        "vst1.32 {{d20-d23}}, [{y}]!",
+        "subs {n}, {n}, #1",
+        "bne 2b",
+        a = in(reg) a.to_bits(),
+        y = inout(reg) y => _,
+        x = inout(reg) x => _,
+        n = inout(reg) chunks => _,
+        out("q8") _, out("q9") _, out("q10") _, out("q11") _, out("q14") _,
+        options(nostack),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

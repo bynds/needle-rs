@@ -182,9 +182,7 @@ impl KvView for F32View<'_> {
     #[inline(always)]
     fn accum(&self, w: f32, off: usize, out: &mut [f32], _scale_at: usize) {
         let n = out.len();
-        for (oi, &vi) in out.iter_mut().zip(&self.v[off..off + n]) {
-            *oi += w * vi;
-        }
+        crate::kernels::axpy(out, w, &self.v[off..off + n]);
     }
 }
 

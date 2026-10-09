@@ -54,10 +54,7 @@ pub fn kron_apply(z: &[f32], a: &[f32], b: &[f32], ba: usize, bb: usize, out: &m
             if aik == 0.0 {
                 continue;
             }
-            let tk = &mut t[k * bb..(k + 1) * bb];
-            for (tkj, &zij) in tk.iter_mut().zip(zi) {
-                *tkj += zij * aik;
-            }
+            crate::kernels::axpy(&mut t[k * bb..(k + 1) * bb], aik, zi);
         }
     }
 
@@ -70,10 +67,7 @@ pub fn kron_apply(z: &[f32], a: &[f32], b: &[f32], ba: usize, bb: usize, out: &m
             if tkj == 0.0 {
                 continue;
             }
-            let bj = &b[j * bb..(j + 1) * bb];
-            for (okl, &bjl) in ok.iter_mut().zip(bj) {
-                *okl += tkj * bjl;
-            }
+            crate::kernels::axpy(ok, tkj, &b[j * bb..(j + 1) * bb]);
         }
     }
 }
@@ -145,10 +139,7 @@ pub fn hadamard_mlp(x: &[f32], w: &HadaMlp, perms: &HadaPerms, hada_n: usize, ou
         if pj == 0.0 {
             continue;
         }
-        let row = &w.cond_u[j * hada_n..(j + 1) * hada_n];
-        for (c, &u) in cond.iter_mut().zip(row) {
-            *c += pj * u;
-        }
+        crate::kernels::axpy(&mut cond, pj, &w.cond_u[j * hada_n..(j + 1) * hada_n]);
     }
 
     // z = pad(x, n), then the three stages.

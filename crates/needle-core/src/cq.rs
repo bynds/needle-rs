@@ -817,6 +817,20 @@ impl CqWeight {
             let p = self.per_byte;
             let bytes_per_group = self.group / p;
             let gbytes = &row[g * bytes_per_group..(g + 1) * bytes_per_group];
+            // The batched path decodes unscaled (norm 1, which rounds nothing): a plain LUT copy,
+            // specialised by indices per byte so it unrolls (the C port's decode_group).
+            if norm == 1.0 && p == 4 {
+                for (o, &byte) in buf.chunks_exact_mut(4).zip(gbytes) {
+                    o.copy_from_slice(&self.lut[byte as usize * 4..byte as usize * 4 + 4]);
+                }
+                return;
+            }
+            if norm == 1.0 && p == 2 {
+                for (o, &byte) in buf.chunks_exact_mut(2).zip(gbytes) {
+                    o.copy_from_slice(&self.lut[byte as usize * 2..byte as usize * 2 + 2]);
+                }
+                return;
+            }
             for (bi, &byte) in gbytes.iter().enumerate() {
                 for k in 0..p {
                     buf[bi * p + k] = self.lut[byte as usize * p + k] * norm;
@@ -883,10 +897,50 @@ fn dot_group<const P: usize>(lut: &[f32], gbytes: &[u8], gx: &[f32]) -> f32 {
         };
         return lanes.iter().sum();
     }
+    #[cfg_attr(target_arch = "arm", allow(unused_assignments))]
     let mut lanes = [0.0f32; ACC_LANES];
 
     let full = gbytes.len() - gbytes.len() % per_iter;
     let mut bi = 0;
+    // ARMv7 without NEON: nothing vectorises, and eight named accumulators read straight from the
+    // LUT cost fewer instructions than staging through `vals` (perfvm, exact instruction counts:
+    // the C port's kernel, which already had this shape, needed 17% fewer per decode step). Same
+    // products, same lanes, same order.
+    #[cfg(target_arch = "arm")]
+    {
+        let (mut l0, mut l1, mut l2, mut l3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let (mut l4, mut l5, mut l6, mut l7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        while bi < full {
+            let xs: &[f32; ACC_LANES] = gx[bi * P..bi * P + ACC_LANES].try_into().unwrap();
+            if P == 4 {
+                let e0: &[f32; 4] = lut[gbytes[bi] as usize * 4..][..4].try_into().unwrap();
+                let e1: &[f32; 4] = lut[gbytes[bi + 1] as usize * 4..][..4].try_into().unwrap();
+                l0 += e0[0] * xs[0];
+                l1 += e0[1] * xs[1];
+                l2 += e0[2] * xs[2];
+                l3 += e0[3] * xs[3];
+                l4 += e1[0] * xs[4];
+                l5 += e1[1] * xs[5];
+                l6 += e1[2] * xs[6];
+                l7 += e1[3] * xs[7];
+            } else {
+                let e0: &[f32; 2] = lut[gbytes[bi] as usize * 2..][..2].try_into().unwrap();
+                let e1: &[f32; 2] = lut[gbytes[bi + 1] as usize * 2..][..2].try_into().unwrap();
+                let e2: &[f32; 2] = lut[gbytes[bi + 2] as usize * 2..][..2].try_into().unwrap();
+                let e3: &[f32; 2] = lut[gbytes[bi + 3] as usize * 2..][..2].try_into().unwrap();
+                l0 += e0[0] * xs[0];
+                l1 += e0[1] * xs[1];
+                l2 += e1[0] * xs[2];
+                l3 += e1[1] * xs[3];
+                l4 += e2[0] * xs[4];
+                l5 += e2[1] * xs[5];
+                l6 += e3[0] * xs[6];
+                l7 += e3[1] * xs[7];
+            }
+            bi += per_iter;
+        }
+        lanes = [l0, l1, l2, l3, l4, l5, l6, l7];
+    }
     while bi < full {
         // The decoded levels are staged in `vals` before the FMA loop on
         // purpose. Multiplying straight out of the LUT looks leaner but measured
@@ -930,7 +984,29 @@ fn group_dot_lanes(u: &[f32], x: &[f32]) -> f32 {
         let lanes = unsafe { crate::cq_neon::lanes8(u.as_ptr(), x.as_ptr(), chunks) };
         return lanes.iter().sum();
     }
+    #[cfg_attr(target_arch = "arm", allow(unused_assignments))]
     let mut lanes = [0.0f32; ACC_LANES];
+    // ARMv7 without NEON: eight named accumulators, as in `dot_group` (and the C port's kernel).
+    #[cfg(target_arch = "arm")]
+    {
+        let (mut l0, mut l1, mut l2, mut l3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let (mut l4, mut l5, mut l6, mut l7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        for (uu, xx) in u[..chunks * ACC_LANES]
+            .chunks_exact(ACC_LANES)
+            .zip(x[..chunks * ACC_LANES].chunks_exact(ACC_LANES))
+        {
+            l0 += uu[0] * xx[0];
+            l1 += uu[1] * xx[1];
+            l2 += uu[2] * xx[2];
+            l3 += uu[3] * xx[3];
+            l4 += uu[4] * xx[4];
+            l5 += uu[5] * xx[5];
+            l6 += uu[6] * xx[6];
+            l7 += uu[7] * xx[7];
+        }
+        lanes = [l0, l1, l2, l3, l4, l5, l6, l7];
+    }
+    #[cfg(not(target_arch = "arm"))]
     for c in 0..chunks {
         let uu: &[f32; ACC_LANES] = u[c * ACC_LANES..(c + 1) * ACC_LANES].try_into().unwrap();
         let xx: &[f32; ACC_LANES] = x[c * ACC_LANES..(c + 1) * ACC_LANES].try_into().unwrap();
