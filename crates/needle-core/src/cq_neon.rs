@@ -229,6 +229,76 @@ pub(crate) unsafe fn axpy8(y: *mut f32, a: f32, x: *const f32, chunks: usize) {
     );
 }
 
+/// [`lut2_lanes`] for two rows at once, as [`lut4_lanes2`] is for `lut4_lanes`.
+///
+/// # Safety
+/// As [`lut2_lanes`], for both `g0` and `g1`.
+#[inline]
+pub(crate) unsafe fn lut2_lanes2(
+    lut: *const f32,
+    g0: *const u8,
+    g1: *const u8,
+    x: *const f32,
+    quads: usize,
+) -> ([f32; ACC_LANES], [f32; ACC_LANES]) {
+    let mut out0 = [0.0f32; ACC_LANES];
+    let mut out1 = [0.0f32; ACC_LANES];
+    core::arch::asm!(
+        "vmov.i32 q12, #0",
+        "vmov.i32 q13, #0",
+        "vmov.i32 q14, #0",
+        "vmov.i32 q15, #0",
+        "2:",
+        "ldrb {t0}, [{g0}], #1",
+        "ldrb {t1}, [{g0}], #1",
+        "add {t0}, {lut}, {t0}, lsl #3",
+        "add {t1}, {lut}, {t1}, lsl #3",
+        "vld1.32 {{d16}}, [{t0}]",
+        "vld1.32 {{d17}}, [{t1}]",
+        "ldrb {t0}, [{g0}], #1",
+        "ldrb {t1}, [{g0}], #1",
+        "add {t0}, {lut}, {t0}, lsl #3",
+        "add {t1}, {lut}, {t1}, lsl #3",
+        "vld1.32 {{d18}}, [{t0}]",
+        "vld1.32 {{d19}}, [{t1}]",
+        "ldrb {t0}, [{g1}], #1",
+        "ldrb {t1}, [{g1}], #1",
+        "add {t0}, {lut}, {t0}, lsl #3",
+        "add {t1}, {lut}, {t1}, lsl #3",
+        "vld1.32 {{d0}}, [{t0}]",
+        "vld1.32 {{d1}}, [{t1}]",
+        "ldrb {t0}, [{g1}], #1",
+        "ldrb {t1}, [{g1}], #1",
+        "add {t0}, {lut}, {t0}, lsl #3",
+        "add {t1}, {lut}, {t1}, lsl #3",
+        "vld1.32 {{d2}}, [{t0}]",
+        "vld1.32 {{d3}}, [{t1}]",
+        "vld1.32 {{d20-d23}}, [{x}]!",
+        "vmla.f32 q12, q8, q10",
+        "vmla.f32 q13, q9, q11",
+        "vmla.f32 q14, q0, q10",
+        "vmla.f32 q15, q1, q11",
+        "subs {n}, {n}, #1",
+        "bne 2b",
+        "vst1.32 {{d24-d27}}, [{o0}]",
+        "vst1.32 {{d28-d31}}, [{o1}]",
+        lut = in(reg) lut,
+        g0 = inout(reg) g0 => _,
+        g1 = inout(reg) g1 => _,
+        x = inout(reg) x => _,
+        n = inout(reg) quads => _,
+        o0 = in(reg) out0.as_mut_ptr(),
+        o1 = in(reg) out1.as_mut_ptr(),
+        t0 = out(reg) _,
+        t1 = out(reg) _,
+        out("q0") _, out("q1") _,
+        out("q8") _, out("q9") _, out("q10") _, out("q11") _,
+        out("q12") _, out("q13") _, out("q14") _, out("q15") _,
+        options(nostack),
+    );
+    (out0, out1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

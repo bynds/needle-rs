@@ -354,11 +354,14 @@ static void attend_step(const nd_cfg *cfg, const float *q, const kv_view *kv, si
     size_t kvh = h / rep;
     const float *qv = q + h * qk;
     float max = -INFINITY, sum = 0.0f, inv, *o;
+    /* The ring slot of position lo + i, stepped rather than taken modulo slots (no divide
+     * instruction in the ARMv7 baseline: % was a library call per position). */
+    size_t slot = lo % slots;
     for (i = 0; i < span; i++) {
-      size_t slot = (lo + i) % slots;
       float acc = kv_dot(kv, qv, (slot * KV + kvh) * qk, qk, slot * KV + kvh);
       scores[i] = acc * scale;
       if (scores[i] > max) max = scores[i];
+      if (++slot == slots) slot = 0;
     }
     for (i = 0; i < span; i++) {
       scores[i] = nd_expf(scores[i] - max);
@@ -367,9 +370,10 @@ static void attend_step(const nd_cfg *cfg, const float *q, const kv_view *kv, si
     inv = 1.0f / sum;
     o = out + h * vd;
     memset(o, 0, vd * sizeof(float));
+    slot = lo % slots;
     for (i = 0; i < span; i++) {
-      size_t slot = (lo + i) % slots;
       kv_accum(kv, scores[i] * inv, (slot * KV + kvh) * vd, o, vd, slot * KV + kvh);
+      if (++slot == slots) slot = 0;
     }
   }
 }

@@ -345,14 +345,21 @@ fn attend_step_with<V: KvView>(
         let kvh = h / repeat;
         let qv = &q[h * d.qk_head_dim..(h + 1) * d.qk_head_dim];
 
+        // The ring slot of position lo + i, stepped rather than taken modulo `slots`: ARMv7 has no
+        // divide instruction in the target baseline, so `%` was a library call per position.
+        let first = lo % slots;
         let mut max = f32::NEG_INFINITY;
-        for (i, s) in scores.iter_mut().enumerate() {
-            let slot = (lo + i) % slots;
+        let mut slot = first;
+        for s in scores.iter_mut() {
             let ko = (slot * d.num_kv_heads + kvh) * d.qk_head_dim;
             let acc = kv.dot(qv, ko, d.qk_head_dim, slot * d.num_kv_heads + kvh);
             *s = acc * scale;
             if *s > max {
                 max = *s;
+            }
+            slot += 1;
+            if slot == slots {
+                slot = 0;
             }
         }
 
@@ -365,11 +372,15 @@ fn attend_step_with<V: KvView>(
 
         let o = &mut out[h * d.v_head_dim..(h + 1) * d.v_head_dim];
         o.fill(0.0);
-        for (i, &s) in scores.iter().enumerate() {
+        let mut slot = first;
+        for &s in scores.iter() {
             let w = s * inv;
-            let slot = (lo + i) % slots;
             let vo = (slot * d.num_kv_heads + kvh) * d.v_head_dim;
             kv.accum(w, vo, o, slot * d.num_kv_heads + kvh);
+            slot += 1;
+            if slot == slots {
+                slot = 0;
+            }
         }
     }
 }

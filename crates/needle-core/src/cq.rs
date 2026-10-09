@@ -747,10 +747,12 @@ impl CqWeight {
         let lut = &self.lut[..256 * P];
         #[allow(unused_mut)]
         let mut first = 0;
-        // ARMv7 NEON, four levels per byte: two rows per pass (`cq_neon::lut4_lanes2`), each
-        // row's lanes and sums exactly as the one-row path computes them.
+        // ARMv7 NEON: two rows per pass (`cq_neon::lut4_lanes2`, `lut2_lanes2`), each row's
+        // lanes and sums exactly as the one-row path computes them.
         #[cfg(all(target_arch = "arm", feature = "neon"))]
-        if P == 4 && bytes_per_group >= 2 && bytes_per_group % 2 == 0 {
+        if (P == 4 && bytes_per_group >= 2 && bytes_per_group % 2 == 0)
+            || (P == 2 && bytes_per_group >= 4 && bytes_per_group % 4 == 0)
+        {
             let pairs = y.len() / 2;
             for pr in 0..pairs {
                 let (o0, o1) = (row_start + 2 * pr, row_start + 2 * pr + 1);
@@ -763,16 +765,26 @@ impl CqWeight {
                     let gx = &xh[g * self.group..(g + 1) * self.group];
                     let b0 = &r0[g * bytes_per_group..(g + 1) * bytes_per_group];
                     let b1 = &r1[g * bytes_per_group..(g + 1) * bytes_per_group];
-                    debug_assert!(gx.len() >= bytes_per_group * 4 && lut.len() >= 1024);
-                    // Safety: each group holds `bytes_per_group` bytes and `4 *` that many inputs.
+                    debug_assert!(gx.len() >= bytes_per_group * P && lut.len() >= 256 * P);
+                    // Safety: each group holds `bytes_per_group` bytes and `P *` that many inputs.
                     let (l0, l1) = unsafe {
-                        crate::cq_neon::lut4_lanes2(
-                            lut.as_ptr(),
-                            b0.as_ptr(),
-                            b1.as_ptr(),
-                            gx.as_ptr(),
-                            bytes_per_group / 2,
-                        )
+                        if P == 4 {
+                            crate::cq_neon::lut4_lanes2(
+                                lut.as_ptr(),
+                                b0.as_ptr(),
+                                b1.as_ptr(),
+                                gx.as_ptr(),
+                                bytes_per_group / 2,
+                            )
+                        } else {
+                            crate::cq_neon::lut2_lanes2(
+                                lut.as_ptr(),
+                                b0.as_ptr(),
+                                b1.as_ptr(),
+                                gx.as_ptr(),
+                                bytes_per_group / 4,
+                            )
+                        }
                     };
                     t0 += n0[g] * l0.iter().sum::<f32>();
                     t1 += n1[g] * l1.iter().sum::<f32>();

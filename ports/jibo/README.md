@@ -296,10 +296,10 @@ and Rust traces on x86 and ARMv7, plain and NEON, and the C99 gates.
 
 | Build | Prefill: before → now | Decode, 8 steps: before → now |
 |---|---|---|
-| Rust plain | 35.3 G → 26.5 G (−25%) | 3.01 G → 2.75 G (−9%) |
-| C plain | 47.5 G → 25.7 G (−46%) | 2.49 G → 2.36 G (−5%) |
-| Rust NEON | 15.6 G → 9.7 G (−38%)\* | 1.51 G → 1.04 G (−31%)\* |
-| C NEON | 17.9 G → 9.4 G (−48%)\* | 1.65 G → 0.99 G (−40%)\* |
+| Rust plain | 35.3 G → 26.5 G (−25%) | 3.01 G → 2.74 G (−9%) |
+| C plain | 47.5 G → 25.7 G (−46%) | 2.49 G → 2.35 G (−6%) |
+| Rust NEON | 15.6 G → 9.7 G (−38%)\* | 1.51 G → 1.02 G (−33%)\* |
+| C NEON | 17.9 G → 9.4 G (−48%)\* | 1.65 G → 0.97 G (−41%)\* |
 
 \* The first NEON measurement already includes the first three changes below.
 `results/emulated-arm-perf-*.jsonl` has every operation.
@@ -328,7 +328,11 @@ Each engine taught the other something:
   NEON in both languages and unrolled in plain C: MLP −65% and attention −45 to −55% on NEON.
 - **Both: two rows per pass in the NEON matvec.** Decode is mostly LUT matvecs. A kernel that
   takes two weight rows at once, each with its own accumulators and lane order, shares every
-  activation load and the loop control: NEON decode −8 to −11%.
+  activation load and the loop control: NEON decode −8 to −11% for the 2-bit projections, and
+  the logits head −10 to −12% for the 4-bit ones.
+- **Both: no division in attention.** The 32-bit ARM baseline has no divide instruction, so the
+  ring-slot `%` in each attention step was a library call per cached position and head. The slot
+  is now stepped: attention −4 to −7% in decode.
 - **Both: batched Engram projections.** The Engram key and value projections ran a matvec per
   position, each preparing the same input. They now use the batched matmul (bit-identical by
   construction) with one shared preparation: Engram −11 to −34%.
