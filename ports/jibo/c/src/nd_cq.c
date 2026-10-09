@@ -63,6 +63,46 @@ static void neon_lanes8x2(const float *u, const float *x0, const float *x1, size
         "d28", "d29", "d30", "d31", "cc", "memory");
 }
 
+/* neon_lanes8 for four inputs against the same u (needle-core's lanes8x4): u is loaded once for
+ * four positions, each position's lanes and order exactly as neon_lanes8 gives them. The four
+ * inputs share q2-q3 in turn; out is 32 floats, position-major. */
+static void neon_lanes8x4(const float *u, const float *x0, const float *x1, const float *x2, const float *x3,
+                          size_t n, float out[32]) {
+  __asm__ __volatile__(
+      "vmov.i32 q8, #0\n\t"
+      "vmov.i32 q9, #0\n\t"
+      "vmov.i32 q10, #0\n\t"
+      "vmov.i32 q11, #0\n\t"
+      "vmov.i32 q12, #0\n\t"
+      "vmov.i32 q13, #0\n\t"
+      "vmov.i32 q14, #0\n\t"
+      "vmov.i32 q15, #0\n\t"
+      "1:\n\t"
+      "vld1.32 {d0-d3}, [%[u]]!\n\t"
+      "vld1.32 {d4-d7}, [%[x0]]!\n\t"
+      "vmla.f32 q8, q0, q2\n\t"
+      "vmla.f32 q9, q1, q3\n\t"
+      "vld1.32 {d4-d7}, [%[x1]]!\n\t"
+      "vmla.f32 q10, q0, q2\n\t"
+      "vmla.f32 q11, q1, q3\n\t"
+      "vld1.32 {d4-d7}, [%[x2]]!\n\t"
+      "vmla.f32 q12, q0, q2\n\t"
+      "vmla.f32 q13, q1, q3\n\t"
+      "vld1.32 {d4-d7}, [%[x3]]!\n\t"
+      "vmla.f32 q14, q0, q2\n\t"
+      "vmla.f32 q15, q1, q3\n\t"
+      "subs %[n], %[n], #1\n\t"
+      "bne 1b\n\t"
+      "vst1.32 {d16-d19}, [%[o]]!\n\t"
+      "vst1.32 {d20-d23}, [%[o]]!\n\t"
+      "vst1.32 {d24-d27}, [%[o]]!\n\t"
+      "vst1.32 {d28-d31}, [%[o]]\n\t"
+      : [u] "+r"(u), [x0] "+r"(x0), [x1] "+r"(x1), [x2] "+r"(x2), [x3] "+r"(x3), [n] "+r"(n), [o] "+r"(out)
+      :
+      : "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23",
+        "d24", "d25", "d26", "d27", "d28", "d29", "d30", "d31", "cc", "memory");
+}
+
 static void neon_lut4_lanes(const float *lut, const uint8_t *g, const float *x, size_t pairs, float out[8]) {
   uint32_t t0, t1;
   __asm__ __volatile__(
@@ -638,6 +678,17 @@ void nd_cq_matmul_rows_prepared(const nd_cq *w, const float *xh, size_t batch, s
       b = 0;
       /* Two positions per pass: the decoded group is read once for both, each position's lanes
        * and sums exactly as one position's (group widths are multiples of 8 here). */
+#if ND_NEON_ASM
+      /* Four positions per pass with NEON (16 q registers hold four positions' lanes). */
+      if (lanewise && w->group % ND_LANES == 0 && w->group >= ND_LANES)
+        for (; b + 4 <= batch; b += 4) {
+          float l[4 * ND_LANES];
+          const float *x = xh + b * stride + base;
+          size_t q;
+          neon_lanes8x4(ug, x, x + stride, x + 2 * stride, x + 3 * stride, w->group / ND_LANES, l);
+          for (q = 0; q < 4; q++) acc[b + q] += norms[g] * sum_lanes(l + q * ND_LANES);
+        }
+#endif
       if (lanewise && w->group % ND_LANES == 0)
         for (; b + 2 <= batch; b += 2) {
           float s0, s1;

@@ -298,8 +298,8 @@ and Rust traces on x86 and ARMv7, plain and NEON, and the C99 gates.
 |---|---|---|
 | Rust plain | 35.3 G → 24.1 G (−32%) | 3.01 G → 2.74 G (−9%) |
 | C plain | 47.5 G → 22.5 G (−53%) | 2.49 G → 2.35 G (−6%) |
-| Rust NEON | 15.6 G → 9.0 G (−42%)\* | 1.51 G → 1.02 G (−33%)\* |
-| C NEON | 17.9 G → 8.3 G (−54%)\* | 1.65 G → 0.97 G (−41%)\* |
+| Rust NEON | 15.6 G → 8.5 G (−45%)\* | 1.51 G → 1.02 G (−33%)\* |
+| C NEON | 17.9 G → 7.9 G (−56%)\* | 1.65 G → 0.97 G (−41%)\* |
 
 \* The first NEON measurement already includes the first three changes below.
 `results/emulated-arm-perf-*.jsonl` has every operation.
@@ -335,6 +335,8 @@ Each engine taught the other something:
   reads the decoded group once for both: NEON asm in both languages, and sixteen named
   accumulators in the plain builds. Each position keeps its own lanes and order. Prefill −7 to
   −13%.
+  With NEON's sixteen q registers, four positions fit at once (eight accumulators, the decoded
+  group, one input): NEON prefill −5% more.
 - **Both: no division in attention.** The 32-bit ARM baseline has no divide instruction, so the
   ring-slot `%` in each attention step was a library call per cached position and head. The slot
   is now stepped: attention −4 to −7% in decode.

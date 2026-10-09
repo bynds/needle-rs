@@ -685,6 +685,26 @@ impl CqWeight {
                 self.decode_group(row, g, 1.0, ug);
                 let base = g * self.group;
                 let mut b = 0;
+                // Four positions per pass with NEON, whose sixteen q registers hold four
+                // positions' lanes (the C port's neon_lanes8x4); same lanes and sums per position.
+                #[cfg(all(target_arch = "arm", feature = "neon"))]
+                if lanewise && self.group % ACC_LANES == 0 && self.group >= ACC_LANES {
+                    while b + 4 <= batch {
+                        let x = |q: usize| xh[(b + q) * stride + base..][..self.group].as_ptr();
+                        // Safety: `ug` and each of the four slices hold `group` floats.
+                        let l = unsafe {
+                            crate::cq_neon::lanes8x4(
+                                ug.as_ptr(),
+                                [x(0), x(1), x(2), x(3)],
+                                self.group / ACC_LANES,
+                            )
+                        };
+                        for (q, lanes) in l.chunks_exact(ACC_LANES).enumerate() {
+                            acc[b + q] += norm * lanes.iter().sum::<f32>();
+                        }
+                        b += 4;
+                    }
+                }
                 // Two positions per pass where that saves work (32-bit ARM): the decoded group is
                 // read once for both, each position's lanes and sums exactly as one position's.
                 if lanewise && PAIR_POSITIONS {

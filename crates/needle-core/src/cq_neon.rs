@@ -95,6 +95,63 @@ pub(crate) unsafe fn lanes8x2(
     (out0, out1)
 }
 
+/// [`lanes8`] for four inputs against the same `u`: `u` is loaded once for four positions, each
+/// position's lanes and order exactly as [`lanes8`] gives them. The inputs take q2-q3 in turn;
+/// the result is four positions' lanes, position-major.
+///
+/// # Safety
+/// `u` and each of `x[0..4]` must be valid for `8 * chunks` reads, and `chunks >= 1`.
+#[inline]
+pub(crate) unsafe fn lanes8x4(
+    u: *const f32,
+    x: [*const f32; 4],
+    chunks: usize,
+) -> [f32; 4 * ACC_LANES] {
+    let mut out = [0.0f32; 4 * ACC_LANES];
+    core::arch::asm!(
+        "vmov.i32 q8, #0",
+        "vmov.i32 q9, #0",
+        "vmov.i32 q10, #0",
+        "vmov.i32 q11, #0",
+        "vmov.i32 q12, #0",
+        "vmov.i32 q13, #0",
+        "vmov.i32 q14, #0",
+        "vmov.i32 q15, #0",
+        "2:",
+        "vld1.32 {{d0-d3}}, [{u}]!",
+        "vld1.32 {{d4-d7}}, [{x0}]!",
+        "vmla.f32 q8, q0, q2",
+        "vmla.f32 q9, q1, q3",
+        "vld1.32 {{d4-d7}}, [{x1}]!",
+        "vmla.f32 q10, q0, q2",
+        "vmla.f32 q11, q1, q3",
+        "vld1.32 {{d4-d7}}, [{x2}]!",
+        "vmla.f32 q12, q0, q2",
+        "vmla.f32 q13, q1, q3",
+        "vld1.32 {{d4-d7}}, [{x3}]!",
+        "vmla.f32 q14, q0, q2",
+        "vmla.f32 q15, q1, q3",
+        "subs {n}, {n}, #1",
+        "bne 2b",
+        "vst1.32 {{d16-d19}}, [{o}]!",
+        "vst1.32 {{d20-d23}}, [{o}]!",
+        "vst1.32 {{d24-d27}}, [{o}]!",
+        "vst1.32 {{d28-d31}}, [{o}]",
+        u = inout(reg) u => _,
+        x0 = inout(reg) x[0] => _,
+        x1 = inout(reg) x[1] => _,
+        x2 = inout(reg) x[2] => _,
+        x3 = inout(reg) x[3] => _,
+        n = inout(reg) chunks => _,
+        o = inout(reg) out.as_mut_ptr() => _,
+        out("q0") _, out("q1") _, out("q2") _, out("q3") _,
+        out("q8") _, out("q9") _, out("q10") _, out("q11") _,
+        out("q12") _, out("q13") _, out("q14") _, out("q15") _,
+        options(nostack),
+    );
+    out
+}
+
 /// Lanes of the LUT-decoded group dot, four levels per byte (2-bit and ternary records): byte
 /// `b` contributes `lut[4b .. 4b + 4]` to four consecutive lanes; two bytes fill the eight.
 ///
