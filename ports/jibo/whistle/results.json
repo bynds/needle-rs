@@ -1,0 +1,24 @@
+{
+  "setup": {
+    "embedding": "upstream needle_embed (whistle.cact b6e02f04...), mean/max/std pooled, 1536 features",
+    "classifier": "logistic regression, 31 intents + none (wi_intent.c)",
+    "train": "synthetic only: Piper LibriTTS-R, 248 FSC phrasings x 40 speakers (9,920) + 2,100 off-topic/noise, augmented",
+    "test_real": "Fluent Speech Commands test: 3,793 clips, 10 unseen speakers; LibriSpeech test-clean: 498 off-topic clips"
+  },
+  "real_test_accuracy": {"synthetic_trained": 0.9765, "real_trained_upper_bound_3000_clips": 0.9871},
+  "same_500_clips": {
+    "classifier": {"accuracy": 0.978, "t0.7": {"accept": 0.956, "err_accepted": 0.006}},
+    "transcribe_then_match": {"accuracy": 0.962, "t0.7": {"accept": 0.960, "err_accepted": 0.023}}
+  },
+  "off_topic_false_accept_t0.7": {"classifier_498_clips": 0.010, "transcribe_then_match_200_clips": 0.0},
+  "armv7_perfvm_instructions": {
+    "load": 132434030,
+    "clips": [
+      {"seconds": 1.19, "embed": 321018809, "classify": 365303, "transcribe": 1019232207},
+      {"seconds": 2.39, "embed": 646382652, "classify": 457721, "transcribe": 1102325024},
+      {"seconds": 3.16, "embed": 868842648, "classify": 519112, "transcribe": 1567950634},
+      {"seconds": 3.67, "embed": 1007303185, "classify": 555966, "transcribe": 2043624451}
+    ]
+  },
+  "armv7_end_to_end_qemu": {"clips": 200, "same_label_as_host": 199, "real_command_accuracy": 0.994, "off_topic_false_accepts_t0.7": 0}
+}
